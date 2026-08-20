@@ -363,7 +363,8 @@ def main() -> int:
     inputs = work / "inputs"
     ref_path = work / "reference.json"
     gen = subprocess.run([
-        sys.executable, str(QOMM_DIR / "mp_spdz" / "gen_qomm.py"),
+        sys.executable, str(QOMM_DIR / "mp_spdz" /
+                            os.environ.get("QOMM_GENERATOR", "gen_qomm.py")),
         "--n-mm", str(args.n_mm), "--n-parties", str(args.n_parties),
         "--mode", args.mode, "--rfs-steps", str(args.rfs_steps),
         "--disclose", args.disclose, "--user-qty", str(args.user_qty),

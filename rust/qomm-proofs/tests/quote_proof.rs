@@ -3,7 +3,7 @@
 //! let a prover open any key it liked.
 
 use curve25519_dalek::scalar::Scalar;
-use qomm_proofs::quote_proof::{Invalid, MakerWitness, QuoteCircuit};
+use qomm_proofs::quote_proof::{Registered, Invalid, MakerWitness, QuoteCircuit};
 use rand_core::OsRng;
 
 fn makers() -> Vec<MakerWitness> {
@@ -11,6 +11,9 @@ fn makers() -> Vec<MakerWitness> {
     [8i64, 5, 12].iter().enumerate().map(|(i, half)| MakerWitness {
         mid: 0, half: *half, slope: 1 + i as i64, invcoef: 1,
         inv: 10 * (i as i64 + 1), maxqty: 1_000, expiry: 10_000, active: true,
+        // registered before the request: the proof is about these, not about
+        // whatever the prover would otherwise commit to at proving time
+        blindings: Registered::fresh(&mut OsRng),
     }).collect()
 }
 
@@ -20,7 +23,7 @@ const CTX: &[u8] = b"test";
 fn the_true_winner_verifies_and_is_the_tightest() {
     let circuit = QuoteCircuit::default();
     let (proof, public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng)
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0)
         .expect("honest makers prove");
     assert_eq!(circuit.verify(&proof, &public, CTX), Ok(()));
     // packed key = effective * n_slots + index, so the index rides in the low bits
@@ -35,7 +38,7 @@ fn the_true_winner_verifies_and_is_the_tightest() {
 fn claiming_a_loser_as_the_winner_fails_minimality() {
     let circuit = QuoteCircuit::default();
     let (mut proof, public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng)
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0)
         .expect("honest makers prove");
     proof.winner_index = 2;
     assert!(matches!(circuit.verify(&proof, &public, CTX),
@@ -49,7 +52,7 @@ fn claiming_a_loser_as_the_winner_fails_minimality() {
 fn a_tampered_winner_value_does_not_open() {
     let circuit = QuoteCircuit::default();
     let (mut proof, public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng)
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0)
         .expect("honest makers prove");
     proof.winner_value += 1;
     assert_eq!(circuit.verify(&proof, &public, CTX), Err(Invalid::WinnerDoesNotOpen));
@@ -59,7 +62,7 @@ fn a_tampered_winner_value_does_not_open() {
 fn a_proof_does_not_carry_across_contexts() {
     let circuit = QuoteCircuit::default();
     let (proof, public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng)
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0)
         .expect("honest makers prove");
     assert!(circuit.verify(&proof, &public, b"another venue").is_err());
 }
@@ -70,9 +73,9 @@ fn the_direction_changes_who_wins() {
     // Selling pays the bid, and the slope now works the other way, so the
     // ordering is not the same one.
     let (ask, ask_public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng).unwrap();
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
     let (bid, bid_public) = circuit
-        .prove(&makers(), 100, 1, 1_000, 1 << 20, 4, CTX, &mut OsRng).unwrap();
+        .prove(&makers(), 100, 1, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
     assert_eq!(circuit.verify(&ask, &ask_public, CTX), Ok(()));
     assert_eq!(circuit.verify(&bid, &bid_public, CTX), Ok(()));
     assert_ne!(ask.winner_value, bid.winner_value);
@@ -83,24 +86,61 @@ fn an_ineligible_maker_is_refused_rather_than_silently_priced() {
     let circuit = QuoteCircuit::default();
     let mut ms = makers();
     ms[0].maxqty = 10;                       // smaller than the request
-    assert!(circuit.prove(&ms, 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng).is_err());
+    assert!(circuit.prove(&ms, 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).is_err());
+}
+
+/// A maker's commitment swapped for another's is caught by the register now,
+/// not by the product proof further down. That is the stronger refusal: the
+/// product only says the arithmetic is consistent, and the register says whose
+/// arithmetic it was supposed to be.
+#[test]
+fn a_swapped_maker_commitment_is_not_on_the_register() {
+    let circuit = QuoteCircuit::default();
+    let (mut proof, public) = circuit
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
+    let other = proof.maker_proofs[1].commitments.slope;
+    proof.maker_proofs[0].commitments.slope = other;
+    assert_eq!(circuit.verify(&proof, &public, CTX),
+               Err(Invalid::NotOnTheRegister(0, "slope")));
+}
+
+/// The statement is what says whose policies these are. Without a register
+/// behind it the proof establishes a minimum over numbers the prover chose.
+#[test]
+fn a_register_that_does_not_match_the_proof_is_refused() {
+    let circuit = QuoteCircuit::default();
+    let (proof, public) = circuit
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
+
+    let mut short = public.clone();
+    short.registry.pop();
+    assert_eq!(circuit.verify(&proof, &short, CTX), Err(Invalid::RegistrySize));
+
+    let mut relabelled = public.clone();
+    relabelled.registry_digest = [0u8; 32];
+    assert_eq!(circuit.verify(&proof, &relabelled, CTX), Err(Invalid::RegistryDigest));
+
+    let mut rewritten = public.clone();
+    rewritten.registry[0].slope = rewritten.registry[1].slope;
+    rewritten.registry_digest = qomm_proofs::quote_proof::registry_digest(&rewritten.registry);
+    assert_eq!(circuit.verify(&proof, &rewritten, CTX),
+               Err(Invalid::NotOnTheRegister(0, "slope")));
 }
 
 #[test]
-fn a_swapped_maker_commitment_breaks_its_own_product_proof() {
+fn a_witness_with_no_registered_blindings_cannot_prove() {
     let circuit = QuoteCircuit::default();
-    let (mut proof, public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng).unwrap();
-    let other = proof.maker_proofs[1].commitments.slope;
-    proof.maker_proofs[0].commitments.slope = other;
-    assert_eq!(circuit.verify(&proof, &public, CTX), Err(Invalid::Depth(0)));
+    let mut ms = makers();
+    ms[0].blindings = Registered::default();
+    assert!(circuit.prove(&ms, 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0)
+            .is_err());
 }
 
 #[test]
 fn the_eligibility_aggregate_must_cover_the_stated_margins() {
     let circuit = QuoteCircuit::default();
     let (mut proof, public) = circuit
-        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng).unwrap();
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
     let key = &circuit.key;
     proof.maker_proofs[0].commitments.fits =
         key.commit(&Scalar::from(999u64), &Scalar::random(&mut OsRng));

@@ -39,6 +39,7 @@ use bulletproofs::RangeProof;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
+use sha2::{Digest, Sha256};
 use qomm_zk::pedersen::Pedersen;
 use qomm_zk::range::RangeCtx;
 use qomm_zk::sigma::{
@@ -48,7 +49,7 @@ use qomm_zk::sigma::{
 use rand_core::{CryptoRng, RngCore};
 
 /// A maker's secret policy and state. Never leaves the maker or the quorum.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct MakerWitness {
     pub mid: i64,
     pub half: i64,
@@ -58,6 +59,79 @@ pub struct MakerWitness {
     pub maxqty: i64,
     pub expiry: i64,
     pub active: bool,
+    /// The blindings this policy was registered under.
+    ///
+    /// Without them the prover drew a fresh blinding for every field at proving
+    /// time, so the minimum was taken over commitments it had just invented --
+    /// true about those, and silent about whether they were the market's. A
+    /// witness carrying none is a policy invented now, and `prove` refuses it.
+    pub blindings: Registered,
+}
+
+/// One maker's registered blindings, in the order the fields are committed.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Registered {
+    pub mid: Scalar,
+    pub half: Scalar,
+    pub slope: Scalar,
+    pub invcoef: Scalar,
+    pub inv: Scalar,
+    pub maxqty: Scalar,
+    pub expiry: Scalar,
+    pub active: Scalar,
+}
+
+impl Registered {
+    pub fn fresh<R: RngCore + CryptoRng>(rng: &mut R) -> Registered {
+        Registered {
+            mid: Scalar::random(rng), half: Scalar::random(rng),
+            slope: Scalar::random(rng), invcoef: Scalar::random(rng),
+            inv: Scalar::random(rng), maxqty: Scalar::random(rng),
+            expiry: Scalar::random(rng), active: Scalar::random(rng),
+        }
+    }
+
+    fn is_registered(&self) -> bool {
+        ![self.mid, self.half, self.slope, self.invcoef, self.inv, self.maxqty,
+          self.expiry, self.active].iter().all(|s| *s == Scalar::ZERO)
+    }
+}
+
+/// The commitments a maker put on the record before any request arrived.
+#[derive(Clone, Copy, Debug)]
+pub struct RegisteredPolicy {
+    pub mid: RistrettoPoint,
+    pub half: RistrettoPoint,
+    pub slope: RistrettoPoint,
+    pub invcoef: RistrettoPoint,
+    pub inv: RistrettoPoint,
+    pub maxqty: RistrettoPoint,
+    pub expiry: RistrettoPoint,
+    pub active: RistrettoPoint,
+}
+
+impl RegisteredPolicy {
+    fn parts(&self) -> [RistrettoPoint; 8] {
+        [self.mid, self.half, self.slope, self.invcoef, self.inv, self.maxqty,
+         self.expiry, self.active]
+    }
+}
+
+/// One digest over the whole eligible set, in order.
+///
+/// Fixing this in the statement is what makes maker *omission* visible: a
+/// prover that drops a maker to change the winner has to publish a different
+/// digest, and the digest was agreed before the request arrived.
+pub fn registry_digest(registered: &[RegisteredPolicy]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"QOMM:QUOTE:REGISTRY:v1");
+    hasher.update((registered.len() as u64).to_be_bytes());
+    for policy in registered {
+        for part in policy.parts() {
+            hasher.update(part.compress().as_bytes());
+        }
+    }
+    hasher.finalize().into()
 }
 
 /// The commitments a verifier needs to reconstruct one maker's statement.
@@ -103,7 +177,7 @@ pub struct QuoteProof {
 }
 
 /// What the verifier is told in the clear.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Public {
     pub qty_commitment: RistrettoPoint,
     pub now: i64,
@@ -111,6 +185,13 @@ pub struct Public {
     pub n_slots: i64,
     /// 0 = the user buys and pays the ask, 1 = the user sells and receives the bid.
     pub direction: u8,
+    /// What the proof is *about*, as opposed to what it proves. Without these
+    /// the statement said only "among the numbers I committed to, this is the
+    /// smallest", which is true of any set the prover cares to invent.
+    pub registry: Vec<RegisteredPolicy>,
+    pub registry_digest: [u8; 32],
+    pub market_digest: [u8; 32],
+    pub slot: u64,
 }
 
 pub struct QuoteCircuit {
@@ -125,6 +206,14 @@ fn scalar(value: i64) -> Scalar {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Invalid {
+    /// A witness with no registered blindings: a policy invented at proving time.
+    Unregistered(usize),
+    /// The statement's registry is not the one the proof is about.
+    NotOnTheRegister(usize, &'static str),
+    /// The digest does not cover the registry beside it.
+    RegistryDigest,
+    /// The statement registers a different number of makers than the proof covers.
+    RegistrySize,
     Depth(usize),
     Skew(usize),
     Eligibility(usize),
@@ -173,8 +262,29 @@ impl QuoteCircuit {
     pub fn prove<R: RngCore + CryptoRng>(
         &self, makers: &[MakerWitness], qty: i64, direction: u8, now: i64,
         sentinel: i64, n_slots: i64, context: &[u8], rng: &mut R,
+        market_digest: [u8; 32], slot: u64,
     ) -> Result<(QuoteProof, Public), &'static str> {
         let key = &self.key;
+        for (index, maker) in makers.iter().enumerate() {
+            if !maker.blindings.is_registered() {
+                return Err("a maker has no registered blindings: a quote \
+proof is about policies that were put on the record, and a witness without them \
+is a policy invented now");
+            }
+        }
+        let registry: Vec<RegisteredPolicy> = makers.iter()
+            .map(|m| RegisteredPolicy {
+                mid: key.commit(&scalar(m.mid), &m.blindings.mid),
+                half: key.commit(&scalar(m.half), &m.blindings.half),
+                slope: key.commit(&scalar(m.slope), &m.blindings.slope),
+                invcoef: key.commit(&scalar(m.invcoef), &m.blindings.invcoef),
+                inv: key.commit(&scalar(m.inv), &m.blindings.inv),
+                maxqty: key.commit(&scalar(m.maxqty), &m.blindings.maxqty),
+                expiry: key.commit(&scalar(m.expiry), &m.blindings.expiry),
+                active: key.commit(&scalar(i64::from(m.active)), &m.blindings.active),
+            })
+            .collect();
+
         let r_qty = Scalar::random(rng);
         let c_qty = key.commit(&scalar(qty), &r_qty);
 
@@ -185,7 +295,7 @@ impl QuoteCircuit {
 
         for (index, m) in makers.iter().enumerate() {
             let (r_slope, r_invcoef, r_inv) =
-                (Scalar::random(rng), Scalar::random(rng), Scalar::random(rng));
+                (m.blindings.slope, m.blindings.invcoef, m.blindings.inv);
             let c_slope = key.commit(&scalar(m.slope), &r_slope);
             let c_invcoef = key.commit(&scalar(m.invcoef), &r_invcoef);
             let c_inv = key.commit(&scalar(m.inv), &r_inv);
@@ -202,14 +312,14 @@ impl QuoteCircuit {
                 key, &mut Self::tag(context, index, "skew"), &c_invcoef,
                 &scalar(m.invcoef), &r_invcoef, &scalar(m.inv), &r_inv, &r_skew, rng);
 
-            let (r_mid, r_half) = (Scalar::random(rng), Scalar::random(rng));
+            let (r_mid, r_half) = (m.blindings.mid, m.blindings.half);
             let ask = m.mid + m.half + depth + skew;
             let bid = m.mid - m.half - depth + skew;
             let r_ask = r_mid + r_half + r_depth + r_skew;
             let r_bid = r_mid - r_half - r_depth + r_skew;
 
             // Eligibility: both margins in one aggregated range proof.
-            let (r_maxqty, r_expiry) = (Scalar::random(rng), Scalar::random(rng));
+            let (r_maxqty, r_expiry) = (m.blindings.maxqty, m.blindings.expiry);
             let fits = m.maxqty - qty;
             let fresh = m.expiry - now;
             if fits < 0 || fresh < 0 {
@@ -226,7 +336,7 @@ impl QuoteCircuit {
             let c_fits = key.commit(&scalar(fits), &r_fits);
             let c_fresh = key.commit(&scalar(fresh), &r_expiry);
 
-            let r_active = Scalar::random(rng);
+            let r_active = m.blindings.active;
             let c_active = key.commit(&Scalar::from(u64::from(m.active)), &r_active);
             let active_bit = prove_bit(key, &mut Self::tag(context, index, "active"),
                                        &c_active, m.active, &r_active, rng);
@@ -305,6 +415,8 @@ impl QuoteCircuit {
             minimality, minimality_commitments, key_commitments,
         }, Public {
             qty_commitment: c_qty, now, sentinel, n_slots, direction,
+            registry_digest: registry_digest(&registry),
+            registry, market_digest, slot,
         }))
     }
 
@@ -312,6 +424,31 @@ impl QuoteCircuit {
         &self, proof: &QuoteProof, public: &Public, context: &[u8],
     ) -> Result<(), Invalid> {
         let key = &self.key;
+        // What the statement has to say before any of it means anything. The
+        // minimum below is over commitments; whose commitments they are is not
+        // something the proof can establish, only something the statement can
+        // name and the verifier can check.
+        if public.registry.len() != proof.maker_proofs.len() {
+            return Err(Invalid::RegistrySize);
+        }
+        if registry_digest(&public.registry) != public.registry_digest {
+            return Err(Invalid::RegistryDigest);
+        }
+        for (index, (registered, maker)) in
+            public.registry.iter().zip(proof.maker_proofs.iter()).enumerate()
+        {
+            let c = &maker.commitments;
+            for (name, on_record, in_proof) in [
+                ("slope", registered.slope, c.slope),
+                ("invcoef", registered.invcoef, c.invcoef),
+                ("inv", registered.inv, c.inv),
+                ("active", registered.active, c.active),
+            ] {
+                if on_record.compress() != in_proof.compress() {
+                    return Err(Invalid::NotOnTheRegister(index, name));
+                }
+            }
+        }
         for (index, maker) in proof.maker_proofs.iter().enumerate() {
             let c = &maker.commitments;
             if !verify_product(key, &mut Self::tag(context, index, "depth"),

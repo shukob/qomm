@@ -195,3 +195,251 @@ def test_interval_arithmetic_covers_sign_changes():
     assert (-a).as_tuple() == (-5, 3)
     assert Interval(0, 1).width_bits() == 2
     assert Interval(-1000, 1000).width_bits() == 11
+
+
+# --- what a tampered audit must not get past the verifier ------------------
+#
+# The verifier used to `zip` the proofs it was handed against the commitments it
+# was handed and check each pair. That asks "is every proof I was given valid"
+# and never "were these the proofs the rule required", so an audit with the
+# steps taken out passed. These are the shapes that used to pass.
+
+import copy                                                            # noqa: E402
+
+from qomm_dsl.audit import RuleAudit                                   # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def honest(group):
+    rule = compile_rule(QUOTE)
+    audit = RuleProver(group).prove(rule, BINDINGS, b"ctx")
+    return rule, audit
+
+
+def _tampered(audit: RuleAudit, **changes) -> RuleAudit:
+    fields = dict(declared=audit.declared, declared_ranges=audit.declared_ranges,
+                  node_proofs=list(audit.node_proofs),
+                  node_commitments=list(audit.node_commitments),
+                  outputs=dict(audit.outputs), output_values=dict(audit.output_values))
+    fields.update(changes)
+    return RuleAudit(**fields)
+
+
+def test_the_honest_audit_verifies(group, honest):
+    rule, audit = honest
+    assert RuleVerifier(group).verify(rule, audit, b"ctx") == (True, "ok")
+
+
+def test_an_audit_with_no_steps_at_all_is_refused(group, honest):
+    """The one that used to pass. `zip` over two empty lists checks nothing."""
+    rule, audit = honest
+    stripped = _tampered(audit, node_proofs=[], node_commitments=[])
+    ok, why = RuleVerifier(group).verify(rule, stripped, b"ctx")
+    assert not ok and "only 0 steps" in why
+
+
+@pytest.mark.parametrize("drop", [0, 3, -1])
+def test_an_audit_missing_one_step_is_refused(group, honest, drop):
+    rule, audit = honest
+    proofs = list(audit.node_proofs)
+    commitments = list(audit.node_commitments)
+    proofs.pop(drop)
+    commitments.pop(drop)
+    ok, why = RuleVerifier(group).verify(
+        rule, _tampered(audit, node_proofs=proofs, node_commitments=commitments), b"ctx")
+    assert not ok, f"a step was removed at {drop} and the audit still passed"
+
+
+def test_an_audit_with_two_steps_swapped_is_refused(group, honest):
+    rule, audit = honest
+    proofs = list(audit.node_proofs)
+    commitments = list(audit.node_commitments)
+    proofs[0], proofs[1] = proofs[1], proofs[0]
+    commitments[0], commitments[1] = commitments[1], commitments[0]
+    ok, why = RuleVerifier(group).verify(
+        rule, _tampered(audit, node_proofs=proofs, node_commitments=commitments), b"ctx")
+    assert not ok
+
+
+def test_an_audit_with_a_duplicated_step_is_refused(group, honest):
+    rule, audit = honest
+    proofs = list(audit.node_proofs)
+    commitments = list(audit.node_commitments)
+    proofs.insert(1, proofs[0])
+    commitments.insert(1, commitments[0])
+    ok, why = RuleVerifier(group).verify(
+        rule, _tampered(audit, node_proofs=proofs, node_commitments=commitments), b"ctx")
+    assert not ok
+
+
+def test_an_audit_with_a_step_the_rule_does_not_ask_for_is_refused(group, honest):
+    rule, audit = honest
+    proofs = list(audit.node_proofs) + [audit.node_proofs[0]]
+    commitments = list(audit.node_commitments) + [audit.node_commitments[0]]
+    ok, why = RuleVerifier(group).verify(
+        rule, _tampered(audit, node_proofs=proofs, node_commitments=commitments), b"ctx")
+    assert not ok and "does not ask for" in why
+
+
+def test_an_output_the_rule_does_not_compute_is_refused(group, honest):
+    """Every proof still valid; the published answer is simply another one."""
+    rule, audit = honest
+    labels = list(audit.outputs)
+    outputs = dict(audit.outputs)
+    outputs[labels[0]] = audit.declared["mid"]
+    ok, why = RuleVerifier(group).verify(rule, _tampered(audit, outputs=outputs), b"ctx")
+    assert not ok and "does not compute" in why
+
+
+def test_a_declared_commitment_swapped_for_another_is_refused(group, honest):
+    rule, audit = honest
+    declared = dict(audit.declared)
+    declared["mid"], declared["half"] = declared["half"], declared["mid"]
+    ok, why = RuleVerifier(group).verify(rule, _tampered(audit, declared=declared), b"ctx")
+    assert not ok
+
+
+def test_an_audit_for_a_different_rule_is_refused(group, honest):
+    """The proofs are honest. They are honest about the wrong program."""
+    _, audit = honest
+    other = compile_rule(UPDATE)
+    ok, why = RuleVerifier(group).verify(other, audit, b"ctx")
+    assert not ok
+
+
+# --- the bit a comparison returns is no longer the prover's to choose --------
+#
+# The old gadgets proved knowledge of an opening of the difference (free: the
+# prover made the commitment) and committed the answer as an unrelated bit; and
+# ordering raised when the comparison was false, so a condition could only ever
+# evaluate to true. Both are now pinned by products the verifier's own
+# arithmetic names the target of.
+
+from zk.commit import prove_bit                                        # noqa: E402
+
+
+def test_a_false_condition_can_now_be_proved_at_all(group):
+    """The old prover raised. A maker that is ineligible could not be audited."""
+    rule = compile_rule(QUOTE)
+    for case in (dict(BINDINGS, expiry=500, now=1_000),
+                 dict(BINDINGS, active=0),
+                 dict(BINDINGS, qty=300, maxqty=100)):
+        audit = RuleProver(group).prove(rule, case, b"ctx")
+        assert RuleVerifier(group).verify(rule, audit, b"ctx") == (True, "ok")
+        assert audit.output_values["eligible"] == 0
+
+
+def _flip_first_bit(group, audit: RuleAudit) -> RuleAudit:
+    """Answer the first comparison the other way, with a valid proof of the lie."""
+    from qomm_dsl.audit import RuleVerifier as _V
+    key = _V(group).key
+    proofs = list(audit.node_proofs)
+    commitments = list(audit.node_commitments)
+    for i, (label, kind, _, tag) in enumerate(proofs):
+        if kind != "bit":
+            continue
+        blinding = key.random_blinding()
+        for lie in (0, 1):
+            commitment = key.commit(lie, blinding)
+            proofs[i] = (label, kind, prove_bit(key, commitment, lie, blinding, tag), tag)
+            commitments[i] = (label, kind, commitment)
+            if group.encode(commitment) != group.encode(audit.node_commitments[i][2]):
+                return RuleAudit(audit.declared, audit.declared_ranges, proofs,
+                                 commitments, audit.outputs, audit.output_values)
+    raise AssertionError("the audit has no bit step to flip")
+
+
+def test_a_flipped_condition_bit_is_refused(group, honest):
+    """The bit proof is still valid. It is valid about the wrong answer."""
+    rule, audit = honest
+    forged = _flip_first_bit(group, audit)
+    ok, why = RuleVerifier(group).verify(rule, forged, b"ctx")
+    assert not ok, "a comparison answered the wrong way was accepted"
+
+
+def test_the_equality_witness_cannot_claim_a_nonzero_difference_is_zero(group):
+    """`b * d = 0` is what stops it, and it lands on a commitment we compute."""
+    rule = compile_rule(QUOTE)
+    audit = RuleProver(group).prove(rule, dict(BINDINGS, active=0), b"ctx")
+    assert audit.output_values["eligible"] == 0
+    forged = _flip_first_bit(group, audit)
+    assert not RuleVerifier(group).verify(rule, forged, b"ctx")[0]
+
+
+def test_the_strongest_consistent_forgery_still_fails_at_the_product(group):
+    """Flip the bit *and* point every step that used it at the new one.
+
+    This is the forgery a prover would actually attempt: the bit proof is
+    honest about the lie, and the step that consumes the bit is re-proved to
+    match. It still fails, because the bit is not pinned in one place. Every
+    later step that touches it names a commitment this verifier derives for
+    itself -- the identity for `bit * difference`, `g / C_b` for the inverse,
+    `2P - S + B - g` for the comparison -- so moving the bit moves a target the
+    prover does not control. Which check fires first is not the property; that
+    one of them always does, is.
+    """
+    from zk.commit import prove_product                                # noqa: E402
+
+    rule = compile_rule(QUOTE)
+    audit = RuleProver(group).prove(rule, dict(BINDINGS, active=0), b"ctx")
+    key = RuleVerifier(group).key
+
+    index = next(i for i, (_, kind, _, _) in enumerate(audit.node_proofs)
+                 if kind == "bit")
+    old_bit = audit.node_commitments[index][2]
+    label, _, _, tag = audit.node_proofs[index]
+    blinding = key.random_blinding()
+    lie = 1                                    # claim the condition held
+    new_bit = key.commit(lie, blinding)
+
+    proofs = list(audit.node_proofs)
+    commitments = list(audit.node_commitments)
+    proofs[index] = (label, "bit", prove_bit(key, new_bit, lie, blinding, tag), tag)
+    commitments[index] = (label, "bit", new_bit)
+
+    # every later step that named the old bit now names the new one, re-proved
+    for i in range(index + 1, len(proofs)):
+        step_label, kind, _, step_tag = proofs[i]
+        if kind != "product":
+            continue
+        first, second, third = commitments[i]
+        if group.encode(first) != group.encode(old_bit):
+            continue
+        commitments[i] = (step_label, kind, (new_bit, second, third))
+        proofs[i] = (step_label, kind,
+                     prove_product(key, new_bit, lie, blinding, 0, 0, 0, step_tag),
+                     step_tag)
+        break
+
+    forged = RuleAudit(audit.declared, audit.declared_ranges, proofs, commitments,
+                       audit.outputs, audit.output_values)
+    ok, why = RuleVerifier(group).verify(rule, forged, b"ctx")
+    assert not ok, "the forged audit was accepted"
+
+
+def test_the_cost_model_counts_what_the_audit_actually_proves(group):
+    """Two derivations of the same obligations, pinned to each other.
+
+    `language.py` derives the obligations from the AST so a rule can be costed
+    before anyone proves it; `audit.py` emits them while proving. Nothing kept
+    the two in step, and they were not: inputs were graded as public, so a
+    product touching one was costed at nothing while the prover proved it.
+    A cost model that disagrees with the audit it is costing is worse than
+    having none, because it is quoted.
+    """
+    import collections
+
+    for source in (QUOTE, UPDATE):
+        rule = compile_rule(source)
+        bindings = dict(BINDINGS)
+        for name, declaration in rule.declarations.items():
+            bindings.setdefault(name, max(0, declaration.interval.lo))
+        audit = RuleProver(group).prove(rule, bindings, b"ctx")
+        planned = collections.Counter(o.kind for o in rule.obligations)
+        proved = audit.size()
+        for kind in ("product", "bit", "equality"):
+            assert planned[kind] == proved.get(kind, 0), (
+                f"{kind}: the plan says {planned[kind]} and the audit proves "
+                f"{proved.get(kind, 0)}")
+        assert planned["range"] == proved.get("range", 0) + proved["declared_range"]
+        assert RuleVerifier(group).verify(rule, audit, b"ctx") == (True, "ok")

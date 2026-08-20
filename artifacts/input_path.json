@@ -1,0 +1,20 @@
+{
+  "host": "host-a",
+  "question": "what it costs to stop a computing node from holding a whole request or policy",
+  "config": {"n_mm": 16, "mode": "rfq", "bit_length": 31, "argmin_arity": 2,
+             "delay_ms": 15, "n_parties": 7, "protocol": "malicious-shamir-party.x",
+             "repeats": 3},
+  "arms": [
+    {"arm": "party-supplied",
+     "note": "the request read with get_input_from(0), each policy with get_input_from(i % N_PARTIES)",
+     "rounds": 70, "party0_mb": 3.19, "global_mb": 18.5623, "verified": true},
+    {"arm": "shared by the input parties",
+     "note": "trader and each maker split every value across all seven nodes; the program sums them",
+     "rounds": 70, "party0_mb": 3.19749, "global_mb": 18.6195, "verified": true}
+  ],
+  "delta": {"rounds": 0, "party0_mb_pct": 0.235, "global_mb_pct": 0.308},
+  "prediction": {
+    "written_before": "rounds +0 to +2 of ~70; bytes +5% to +25%",
+    "outcome": "rounds +0 as predicted; bytes +0.3%, an order of magnitude less than predicted. Shamir input is a local share plus one masked broadcast, and the preprocessing it needs is amortised, so seven times the input count barely registers against a comparison chain that dominates the total."
+  }
+}

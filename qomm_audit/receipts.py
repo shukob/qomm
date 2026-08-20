@@ -30,6 +30,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 DOMAIN = b"QOMM:AUDIT:v1"
+
+# Bumped when `signed_body` changes shape, so a receipt signed under the old
+# shape cannot be replayed as one under the new.
+VERSION = b"2"
 GENESIS = b"\x00" * 32
 
 
@@ -68,6 +72,8 @@ class NodeReceipt:
     node: int
     slot: int
     mm_set_digest: bytes
+    market_digest: bytes
+    deadline: int
     prev_state_digest: bytes
     new_state_digest: bytes
     result_digest: bytes
@@ -75,9 +81,23 @@ class NodeReceipt:
     signature: bytes
 
     def signed_body(self) -> bytes:
-        return digest(b"receipt", self.node.to_bytes(4, "big"),
-                      self.slot.to_bytes(8, "big"), self.mm_set_digest,
-                      self.prev_state_digest, self.new_state_digest, self.result_digest)
+        """Everything a reader of this receipt is asked to believe.
+
+        `emitted_at` used to be outside this. It is the field the deadline test
+        reads, so a receipt could be signed late and the timestamp rewritten
+        afterwards with the signature still checking out --- and being late past
+        the deadline is one of the faults this file exists to attribute. The
+        market digest and the deadline were outside it too, so a node could sign
+        for one slot's configuration and have it counted for another's.
+        """
+        return digest(b"receipt:v2", VERSION,
+                      self.node.to_bytes(4, "big"),
+                      self.slot.to_bytes(8, "big"),
+                      self.mm_set_digest, self.market_digest,
+                      self.deadline.to_bytes(8, "big"),
+                      self.emitted_at.to_bytes(8, "big"),
+                      self.prev_state_digest, self.new_state_digest,
+                      self.result_digest)
 
     def content_digest(self) -> bytes:
         """What the node is committing to. Two receipts differing here equivocate."""
@@ -92,6 +112,7 @@ def sign_receipt(key: Ed25519PrivateKey, node: int, spec: SlotSpec, *,
     receipt = NodeReceipt(
         node=node, slot=spec.slot,
         mm_set_digest=mm_set_digest if mm_set_digest is not None else spec.mm_set_digest,
+        market_digest=spec.market_digest, deadline=spec.deadline,
         prev_state_digest=prev_state_digest, new_state_digest=new_state_digest,
         result_digest=result_digest, emitted_at=emitted_at, signature=b"")
     return NodeReceipt(**{**receipt.__dict__, "signature": key.sign(receipt.signed_body())})
@@ -194,19 +215,28 @@ class AuditLedger:
                     tally.setdefault(receipt.new_state_digest, []).append(node)
         settled = None
         if tally:
-            settled = max(tally, key=lambda k: len(set(tally[k])))
-            if len(set(tally[settled])) < spec.required_receipts:
-                found.append(Evidence(
-                    Fault.MISSING_RECEIPT, -1, slot,
-                    f"only {len(set(tally[settled]))} agreeing receipts, "
-                    f"{spec.required_receipts} required"))
+            plurality = max(tally, key=lambda k: len(set(tally[k])))
+            agreeing = len(set(tally[plurality]))
             for state, nodes in tally.items():
-                if state != settled:
+                if state != plurality:
                     for node in sorted(set(nodes)):
                         found.append(Evidence(
                             Fault.FORKED_STATE, node, slot,
                             "signed a new state that the quorum did not agree with"))
-            self._settled_state[slot] = settled
+            if agreeing < spec.required_receipts:
+                # A plurality is not a quorum. This used to record the shortfall
+                # and then store the plurality state anyway, so a state no
+                # quorum ever agreed to became the predecessor the next slot
+                # continued from --- and every honest receipt after it was
+                # scored stale against it. The slot stays unresolved instead.
+                found.append(Evidence(
+                    Fault.MISSING_RECEIPT, -1, slot,
+                    f"only {agreeing} agreeing receipts, "
+                    f"{spec.required_receipts} required; the slot is unresolved "
+                    "and the state does not advance"))
+            else:
+                settled = plurality
+                self._settled_state[slot] = settled
 
         self.evidence.extend(found)
         return settled, found

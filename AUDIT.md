@@ -158,8 +158,7 @@ One walk of the same tree produces the value and the proof together. There is no
 | kind of proof | count |
 |---|---:|
 | bit | 3 |
-| opening | 1 |
-| product | 4 |
+| product | 10 |
 | range | 10 |
 
 Measured on Ed25519: building the audit **28.9 ms**, verifying **32.2 ms**, output identical to cleartext evaluation. A test checks that adding a term to the rule adds the corresponding proof.

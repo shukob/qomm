@@ -121,12 +121,58 @@ def test_a_late_receipt_does_not_count(venue):
     assert any(e.fault is Fault.MISSING_RECEIPT and e.node == 5 for e in found)
 
 
-def test_quorum_shortfall_is_reported(venue):
+def test_a_slot_short_of_quorum_does_not_settle(venue):
+    """A plurality is not a quorum, and this used to store it as one.
+
+    The shortfall was recorded and the plurality state saved anyway, so a state
+    no quorum ever agreed to became the predecessor the next slot continued
+    from --- and honest receipts after it were scored stale against it.
+    """
     keys, ledger = venue
     _honest_round(keys, ledger, 0, GENESIS, skip=(1, 2, 3))
     settled, found = ledger.settle(0, now=60)
-    assert settled is not None
+    assert settled is None
+    assert ledger.settled_state(0) == GENESIS, "the state advanced without a quorum"
     assert any(e.fault is Fault.MISSING_RECEIPT and e.node == -1 for e in found)
+
+
+def test_a_slot_with_a_quorum_still_settles(venue):
+    keys, ledger = venue
+    _honest_round(keys, ledger, 0, GENESIS, skip=(6,))
+    settled, found = ledger.settle(0, now=60)
+    assert settled is not None
+    assert ledger.settled_state(0) == settled
+    assert not any(e.fault is Fault.MISSING_RECEIPT and e.node == -1 for e in found)
+
+
+def test_the_timestamp_cannot_be_moved_after_signing(venue):
+    """`emitted_at` decides lateness, so it has to be inside the signature."""
+    keys, ledger = venue
+    spec = _spec(0)
+    ledger.open_slot(spec)
+    late = sign_receipt(keys[0], 0, spec, prev_state_digest=GENESIS,
+                        new_state_digest=digest(b"s"), result_digest=digest(b"r"),
+                        emitted_at=spec.deadline + 100)
+    backdated = NodeReceipt(**{**late.__dict__, "emitted_at": 1})
+    found = ledger.record(backdated)
+    assert any(e.fault is Fault.BAD_SIGNATURE for e in found), (
+        "a receipt signed late was backdated and still verified")
+
+
+def test_the_slot_configuration_cannot_be_moved_after_signing(venue):
+    """A receipt signed for one market must not count for another."""
+    keys, ledger = venue
+    spec = _spec(0)
+    ledger.open_slot(spec)
+    genuine = sign_receipt(keys[0], 0, spec, prev_state_digest=GENESIS,
+                           new_state_digest=digest(b"s"), result_digest=digest(b"r"),
+                           emitted_at=10)
+    for field, value in (("market_digest", digest(b"another market")),
+                         ("deadline", spec.deadline + 10_000)):
+        moved = NodeReceipt(**{**genuine.__dict__, field: value})
+        found = ledger.record(moved)
+        assert any(e.fault is Fault.BAD_SIGNATURE for e in found), (
+            f"{field} was changed after signing and the receipt still verified")
 
 
 def test_a_forged_signature_is_rejected(venue):

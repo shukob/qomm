@@ -248,7 +248,12 @@ class _Analyser(ast.NodeVisitor):
         if declaration is None:
             raise RuleError(f"'{node.id}' is not declared; a rule may only read its own "
                             f"declared parameters, state and inputs")
-        degree = 1 if declaration.role in ("param", "state") else 0
+        # An input is committed with a fresh blinding and the verifier sees only
+        # the commitment, so it is as secret as a parameter and a product that
+        # touches it costs a proof. Grading inputs as degree zero said the
+        # opposite, and the cost model came out two products short on a rule
+        # with two of them --- `test_dsl.py` now pins the plan to the audit.
+        degree = 0 if declaration.role == "constant" else 1
         return declaration.interval, degree
 
     def visit_UnaryOp(self, node):
@@ -282,13 +287,28 @@ class _Analyser(ast.NodeVisitor):
         left, _ = self.visit(node.left)
         right, _ = self.visit(node.comparators[0])
         difference = left - right if isinstance(node.ops[0], (ast.GtE, ast.Gt)) else right - left
+        # The order here is the order `RuleProver` emits them, and
+        # `test_dsl.py` pins the two together --- a cost model that has drifted
+        # from the audit it is costing is worse than no cost model.
+        self.obligations.append(Obligation("bit", self._label,
+                                           f"result of {ast.unparse(node)}"))
         if isinstance(node.ops[0], (ast.Eq, ast.NotEq)):
+            # zero test: `bit * difference = 0` and `difference * witness = 1 - bit`
             self.obligations.append(Obligation(
-                "opening", self._label, f"{ast.unparse(node)} decided by opening a difference"))
+                "product", self._label,
+                f"{ast.unparse(node)}: the bit sends the difference to zero"))
+            self.obligations.append(Obligation(
+                "product", self._label,
+                f"{ast.unparse(node)}: the difference is invertible when the bit is 0"))
         else:
+            # total comparison: one product for `bit * difference`, then one
+            # range proof on `2P - S + B - g`, which covers both answers
             self.obligations.append(Obligation(
-                "range", self._label, ast.unparse(node), difference.width_bits()))
-        self.obligations.append(Obligation("bit", self._label, f"result of {ast.unparse(node)}"))
+                "product", self._label,
+                f"{ast.unparse(node)}: the bit against the difference"))
+            self.obligations.append(Obligation(
+                "range", self._label, ast.unparse(node),
+                (difference - Interval(1, 1)).width_bits() + 1))
         return Interval(0, 1), 0
 
     def visit_BoolOp(self, node):
@@ -303,6 +323,26 @@ class _Analyser(ast.NodeVisitor):
                 "product", self._label, "conjunction of two conditions"))
         return Interval(0, 1), 0
 
+    def _selection(self, what: str, left: Interval, right: Interval,
+                   result: Interval) -> None:
+        """What `min`/`max` actually costs, which is not one range and one product.
+
+        `RuleProver._select` proves the result no worse than *each* input --- two
+        range proofs, not one --- and then pins it to one of them with a product
+        that has to open to zero. The plan counted one range and one product and
+        no opening, so a rule with a clamp in it was costed at less than half.
+        """
+        self.obligations.append(Obligation(
+            "range", self._label, f"{what}: not worse than the first",
+            (left - result).width_bits()))
+        self.obligations.append(Obligation(
+            "range", self._label, f"{what}: not worse than the second",
+            (right - result).width_bits()))
+        self.obligations.append(Obligation(
+            "product", self._label, f"{what}: pinned to one of its inputs"))
+        self.obligations.append(Obligation(
+            "equality", self._label, f"{what}: the pin opens to zero"))
+
     def visit_Call(self, node):
         if not isinstance(node.func, ast.Name) or node.func.id not in INTRINSICS:
             raise RuleError(f"only {sorted(INTRINSICS)} may be called")
@@ -312,11 +352,9 @@ class _Analyser(ast.NodeVisitor):
             if len(parts) != 2:
                 raise RuleError(f"{name} takes exactly two arguments")
             (a, da), (b, db) = parts
-            self.obligations.append(Obligation(
-                "range", self._label, f"{name} comparison", (a - b).width_bits()))
-            self.obligations.append(Obligation("product", self._label, f"{name} selection"))
             merged = Interval(min(a.lo, b.lo), min(a.hi, b.hi)) if name == "min" else \
                 Interval(max(a.lo, b.lo), max(a.hi, b.hi))
+            self._selection(name, a, b, merged)
             return merged, max(da, db)
         if name == "clamp":
             if len(parts) != 3:
@@ -324,11 +362,10 @@ class _Analyser(ast.NodeVisitor):
             (value, degree), (lo, _), (hi, _) = parts
             if lo.lo != lo.hi or hi.lo != hi.hi:
                 raise RuleError("clamp bounds must be constants so the range is static")
-            self.obligations.append(Obligation(
-                "range", self._label, "clamp lower bound", (value - lo).width_bits()))
-            self.obligations.append(Obligation(
-                "range", self._label, "clamp upper bound", (hi - value).width_bits()))
-            self.obligations.append(Obligation("product", self._label, "clamp selection"))
+            lowered = Interval(max(value.lo, lo.lo), max(value.hi, lo.hi))
+            self._selection("clamp lower bound", value, lo, lowered)
+            clamped = Interval(min(lowered.lo, hi.lo), min(lowered.hi, hi.hi))
+            self._selection("clamp upper bound", lowered, hi, clamped)
             return Interval(lo.lo, hi.hi), degree
         if name == "signed":
             if len(parts) != 2:

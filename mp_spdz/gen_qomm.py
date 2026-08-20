@@ -27,6 +27,11 @@ import random
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from qomm_transport.roles import check_field_width, split  # noqa: E402
+import sys
+from pathlib import Path
+
 FIELDS = ("asset", "mid", "half", "slope", "invcoef", "inv", "maxqty", "expiry", "active")
 
 def sentinel_for(bit_length: int, padded_mm: int, max_cost: int) -> int:
@@ -119,17 +124,29 @@ def build_program(
     w(f"MAKER_ASSET = {maker_assets}")
     w(f"REF_MID = {ref_mid}   # only used for the sentinel scale")
     w("")
-    w("# ---- user request (secret-shared through the party-0 gateway) ----")
+    w("# ---- how a secret gets in ----")
+    w("# An input party is not a computing party. The trader and each market")
+    w("# maker split their values into N shares that sum to them over the")
+    w("# integers and hand share p to node p; the program adds the N inputs")
+    w("# back. Reconstruction is local, so this costs rounds only in the input")
+    w("# phase, and no computing node ever holds a whole request or policy.")
+    w("def secret_input():")
+    w("    total = sint.get_input_from(0)")
+    w("    for _p in range(1, N_PARTIES):")
+    w("        total = total + sint.get_input_from(_p)")
+    w("    return total")
+    w("")
+    w("# ---- user request, shared by the trader across every node ----")
     w(f"N_REQ = {n_requests}")
     w("req_asset = Array(N_REQ, sint)")
     w("req_qty = Array(N_REQ, sint)")
     w("req_dir = Array(N_REQ, sint)   # 0 = user buys (takes ask), 1 = user sells")
     w("req_entity = Array(N_REQ, sint)")
     w("for r in range(N_REQ):")
-    w("    req_asset[r] = sint.get_input_from(0)")
-    w("    req_qty[r] = sint.get_input_from(0)")
-    w("    req_dir[r] = sint.get_input_from(0)")
-    w("    req_entity[r] = sint.get_input_from(0)")
+    w("    req_asset[r] = secret_input()")
+    w("    req_qty[r] = secret_input()")
+    w("    req_dir[r] = secret_input()")
+    w("    req_entity[r] = secret_input()")
     w("u_asset = req_asset[0]")
     w("u_qty = req_qty[0]")
     w("u_dir = req_dir[0]")
@@ -138,16 +155,18 @@ def build_program(
     w("# arrived. The flag is secret and never branched on, so the circuit shape,")
     w("# the round count and the byte count are identical either way; it only")
     w("# stops a dummy slot from moving market-maker state.")
-    w("u_is_real = sint.get_input_from(0)")
+    w("u_is_real = secret_input()")
     w("")
     w("# ---- market-maker price policies, one column per field ----")
     for f in FIELDS:
         w(f"col_{f} = Array(M, sint)")
     w("")
+    w("# Each maker deals its own policy to every node. The previous form gave")
+    w("# maker i entirely to node i % N_PARTIES, which is a policy in the clear")
+    w("# at one of the nodes it is supposed to be hidden from.")
     w("for i in range(M):")
-    w("    owner = i % N_PARTIES")
     for f in FIELDS:
-        w(f"    col_{f}[i] = sint.get_input_from(owner)")
+        w(f"    col_{f}[i] = secret_input()")
     w("")
     w("idx = Array(M, sint)")
     w("for i in range(M):")
@@ -459,6 +478,8 @@ def build_inputs(
     ref_mid: int,
     seed: int,
     audit_gates: bool = False,
+    value_bits: int = 32,
+    field_bits: int = 128,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
 
@@ -466,9 +487,27 @@ def build_inputs(
     """
     rng = random.Random(seed)
     per_party: dict[int, list[int]] = {p: [] for p in range(n_parties)}
+
+    # An input party splits its value and hands one share to each node, in the
+    # order `secret_input()` reads them. Party p's file therefore holds one
+    # share of every secret and no whole value of anything -- which
+    # `tests/test_mpc_inputs.py` checks rather than trusts.
+    check_field_width(n_parties, value_bits, field_bits)
+
+    # The sharing draws from its own stream. Sharing off `rng` would make the
+    # policy fixture depend on how many values had been split before it, so the
+    # same seed would stop meaning the same market.
+    share_rng = random.Random(seed ^ 0x5EED)
+
+    def deal(value: int) -> None:
+        for party, share in enumerate(split(int(value), n_parties, value_bits,
+                                            share_rng)):
+            per_party[party].append(share)
+
     for _ in range(n_requests):
-        per_party[0].extend([user_asset, user_qty, user_dir, user_entity])
-    per_party[0].append(int(is_real))
+        for value in (user_asset, user_qty, user_dir, user_entity):
+            deal(value)
+    deal(int(is_real))
 
     policies = []
     for i in range(n_mm):
@@ -493,8 +532,8 @@ def build_inputs(
                 "inv": 0, "maxqty": 0, "expiry": 0, "active": 0,
             }
         policies.append(pol)
-        owner = i % n_parties
-        per_party[owner].extend(pol[f] for f in FIELDS)
+        for f in FIELDS:
+            deal(pol[f])
 
     # cleartext reference (what the circuit must reproduce)
     best_price = None
@@ -565,6 +604,9 @@ def main() -> int:
     ap.add_argument("--user-asset", type=int, default=0)
     ap.add_argument("--user-entity", type=int, default=42)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--field-bits", type=int, default=128,
+                    help="width of the MPC field the shares are summed in; "
+                         "must match what the program is compiled for")
     ap.add_argument("--bit-length", type=int, default=63)
     ap.add_argument("--price-conditionals", type=int, default=0,
                     help="conditionals on secrets to add to the price rule. The "
@@ -651,6 +693,12 @@ def main() -> int:
         ref_mid=args.ref_mid,
         seed=args.seed,
         audit_gates=args.audit_gates,
+        # The widest value an input party splits, and the field the shares are
+        # reconstructed in. Both are declared rather than assumed, because a
+        # field too narrow for the shares would wrap the sum and the circuit
+        # would compute on a different request than the one that was sent.
+        value_bits=args.bit_length + 1,
+        field_bits=args.field_bits,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)
     for party, values in per_party.items():
