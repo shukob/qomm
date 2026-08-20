@@ -41,14 +41,44 @@ ACCENT = "#4f7942"
 GRID = {"color": "#dddddd", "linewidth": 0.6}
 
 
+def central(x):
+    """Summaries flattened to the number a figure would plot.
+
+    The harnesses record `{"mean": ..., "sd": ..., "n": ...}` for a sampled
+    reading and `{"exact": n}` for a counted one; a figure wants the middle of
+    either. Doing it once on load rather than at each call site is deliberate:
+    the previous arrangement read `r["settle_ms"]` directly, the Python side
+    started summarising, and three figures stopped being drawn --- which nobody
+    noticed, because a figure that fails to draw is a measurement nobody looks
+    at. Flattening here cannot miss a field.
+    """
+    if isinstance(x, dict):
+        # `Summary`: a sampled reading. Anything else that happens to carry a
+        # mean is left alone --- a paired interval carries `half_width` and a
+        # figure that draws error bars needs it.
+        if {"mean", "sd", "n"} <= set(x):
+            return x["mean"]
+        if set(x) == {"exact"}:
+            return x["exact"]
+        return {k: central(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [central(v) for v in x]
+    return x
+
+
+def value(x):
+    """One reading. Kept for the figures that name a field explicitly."""
+    return central(x)
+
+
 def load(name: str):
     path = ART / name
     if not path.exists():
         return None
     text = path.read_text()
     if name.endswith(".jsonl"):
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
-    return json.loads(text)
+        return central([json.loads(line) for line in text.splitlines() if line.strip()])
+    return central(json.loads(text))
 
 
 def frame(ax, title: str, xlabel: str, ylabel: str) -> None:
@@ -105,15 +135,15 @@ def fig_settlement_cost(out: Path):
         return None, "defmi.json (make defmi)"
     fig, (left, right) = plt.subplots(1, 2, figsize=(9.2, 3.4))
     scaling = py["scaling"]
-    left.plot([r["bits"] for r in scaling], [r["settle_ms"] for r in scaling],
+    left.plot([r["bits"] for r in scaling], [value((r["settle"])) for r in scaling],
               "o-", color=PLAIN, label="Python, bit decomposition", markersize=4)
-    right.plot([r["bits"] for r in scaling], [r["package_bytes"] / 1024 for r in scaling],
+    right.plot([r["bits"] for r in scaling], [value((r["package_bytes"])) / 1024 for r in scaling],
                "o-", color=PLAIN, label="Python", markersize=4)
     if rs:
         left.plot([r["bits"] for r in rs["scaling"]], [r["settle_ms"] for r in rs["scaling"]],
                   "s-", color=OBLIVIOUS, label="Rust, aggregated range proofs", markersize=4)
         right.plot([r["bits"] for r in rs["scaling"]],
-                   [r["package_bytes"] / 1024 for r in rs["scaling"]],
+                   [value(r["package_bytes"]) / 1024 for r in rs["scaling"]],
                    "s-", color=OBLIVIOUS, label="Rust", markersize=4)
     frame(left, "settlement verification", "ledger balance width (bits)", "ms")
     frame(right, "wire size", "ledger balance width (bits)", "KiB")
@@ -287,15 +317,64 @@ def fig_notes(out: Path):
         return None, "defmi.json with a notes section"
     rings = data["notes"]["rings"]
     fig, ax = plt.subplots(figsize=(4.8, 3.4))
-    ax.plot([r["ring"] for r in rings], [r["build_ms"] for r in rings], "o-",
+    ax.plot([r["ring"] for r in rings], [value((r["build"])) for r in rings], "o-",
             color=PLAIN, label="payer proves", markersize=4)
-    ax.plot([r["ring"] for r in rings], [r["check_ms"] for r in rings], "s-",
+    ax.plot([r["ring"] for r in rings], [value((r["check"])) for r in rings], "s-",
             color=OBLIVIOUS, label="node verifies", markersize=4)
     frame(ax, "the anonymity set is bounded by the payer, not the node",
           "candidates the spend hides among", "ms")
     ax.set_xscale("log", base=2)
     ax.legend(fontsize=8, frameon=False)
     return save(fig, "anonymity_set", out), None
+
+
+def fig_rings(out: Path):
+    """The ring is not the anonymity set; other people's traffic is."""
+    data = load("rings.json")
+    if not data:
+        return None, "rings.json (make rings-bench)"
+    rows = data["rows"]
+    sizes = sorted({r["ring"] for r in rows})
+    fig, ax = plt.subplots(figsize=(4.8, 3.4))
+    styles = {"uniform": ("o--", PLAIN), "recent": ("s-", OBLIVIOUS)}
+    for decoys, (marker, colour) in styles.items():
+        for size in sizes:
+            points = sorted((r["traffic"], r["observer_success"]) for r in rows
+                            if r["decoys"] == decoys and r["ring"] == size)
+            if not points:
+                continue
+            label = f"{decoys}, ring {size}" if size == sizes[-1] else None
+            ax.plot([t for t, _ in points], [s for _, s in points], marker,
+                    color=colour, markersize=4, alpha=0.4 if size != sizes[-1] else 1.0,
+                    label=label)
+    for size in sizes:
+        ax.axhline(1.0 / size, color="#999999", linewidth=0.6, linestyle=":")
+    ax.set_ylim(0, 1.05)
+    frame(ax, "what a chain reader names, and what the proof promises",
+          "other settlements between being paid and paying",
+          "the observer is right this often")
+    ax.legend(fontsize=8, frameon=False)
+    return save(fig, "ring_anonymity", out), None
+
+
+def fig_evm(out: Path):
+    """The unit is blocks per verification, not verifications per second."""
+    data = load("evm_settlement.json")
+    if not data:
+        return None, "evm_settlement.json (make evm-gas)"
+    rows = data["scaling"]
+    fig, ax = plt.subplots(figsize=(4.8, 3.4))
+    bits = [str(r["bits"]) for r in rows]
+    blocks = [r["blocks"] for r in rows]
+    colours = [PLAIN if b >= 1.0 else OBLIVIOUS for b in blocks]
+    ax.bar(bits, blocks, color=colours, width=0.6)
+    ax.axhline(1.0, color="#333333", linewidth=0.8)
+    ax.annotate("one whole block", (len(bits) - 0.5, 1.0), fontsize=8,
+                ha="right", va="bottom", color="#333333")
+    frame(ax, f"one settlement verified on an EVM, at "
+              f"{data['unit']['gas']:,} gas a scalar multiplication",
+          "rail width", "blocks of gas")
+    return save(fig, "evm_blocks", out), None
 
 
 def fig_placement(out: Path):
@@ -322,7 +401,7 @@ def fig_state_audit(out: Path):
         return None, "state_audit.json (make state-audit)"
     chains = data["chains"]
     fig, ax = plt.subplots(figsize=(4.8, 3.4))
-    ax.plot([r["steps"] for r in chains], [r["prove_ms_per_step"] for r in chains],
+    ax.plot([r["steps"] for r in chains], [r["prove_per_step"] for r in chains],
             "o-", color=PLAIN, label="maker proves", markersize=4)
     ax.plot([r["steps"] for r in chains], [r["verify_ms_per_step"] for r in chains],
             "s-", color=OBLIVIOUS, label="venue verifies", markersize=4)
@@ -359,8 +438,8 @@ def fig_dp_effect(out: Path):
 
 
 FIGURES = (fig_rho, fig_settlement_cost, fig_parallel, fig_residency,
-           fig_real_market, fig_relay, fig_wasm, fig_notes, fig_placement,
-           fig_state_audit, fig_dp_effect)
+           fig_real_market, fig_relay, fig_wasm, fig_notes, fig_rings, fig_evm,
+           fig_placement, fig_state_audit, fig_dp_effect)
 
 
 def main() -> int:
