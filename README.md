@@ -1,5 +1,7 @@
 # qomm
 
+**QOMM** is *query-oblivious market making*. It settles through [zkpi](https://github.com/shukob/zkpi) and [defmi](https://github.com/shukob/defmi), a *zero-knowledge payment instruction* and a *decentralized financial market infrastructure*.
+
 Query-oblivious market making: quote without disclosing the request, the pricing rule, or the market.
 
 ## What it does
