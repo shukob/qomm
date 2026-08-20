@@ -1,0 +1,184 @@
+{
+  "host": "host-c",
+  "python": "3.13.5",
+  "seeds": 8,
+  "arms": {
+    "generated": {
+      "meta": {
+        "source": "generated"
+      },
+      "layer": "reactive",
+      "levels": {
+        "none": {
+          "fill_rate": {
+            "mean": 0.8103268756576639,
+            "half_width": 0.031653212131477176,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": 296.67991867832444,
+            "half_width": 101.97164669114434,
+            "excludes_zero": true,
+            "n": 8
+          }
+        },
+        "dp_uncorrected": {
+          "fill_rate": {
+            "mean": 0.7413483285386688,
+            "half_width": 0.07474614733320709,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": 225.11572631854128,
+            "half_width": 85.39609712196491,
+            "excludes_zero": true,
+            "n": 8
+          }
+        },
+        "dp_corrected": {
+          "fill_rate": {
+            "mean": 0.7708507167589367,
+            "half_width": 0.0330225953271669,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": 238.77839199931162,
+            "half_width": 78.75747538913284,
+            "excludes_zero": true,
+            "n": 8
+          }
+        }
+      },
+      "paired_against_no_disclosure": {
+        "dp_uncorrected": {
+          "fill_rate": {
+            "mean": -0.06897854711899512,
+            "half_width": 0.08151730756624044,
+            "excludes_zero": false,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -71.56419235978314,
+            "half_width": 53.07654784206388,
+            "excludes_zero": true,
+            "n": 8
+          }
+        },
+        "dp_corrected": {
+          "fill_rate": {
+            "mean": -0.039476158898727215,
+            "half_width": 0.034524760693040384,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -57.90152667901279,
+            "half_width": 35.983957006179466,
+            "excludes_zero": true,
+            "n": 8
+          }
+        }
+      }
+    },
+    "tape": {
+      "meta": {
+        "source": "bybit:LTCUSDT2021-06-15.csv",
+        "requests": 411,
+        "entities": 24,
+        "wallets_per_entity": 1,
+        "entity_kind": "assigned round-robin (the tape has no identities)",
+        "informed_share_measured": 0.0,
+        "agreement_rate_measured": 0.46715328467153283,
+        "informed_share_estimated": 0.0,
+        "informed_base_assumed": 0.3,
+        "edge_ticks_measured": 58,
+        "edge_ticks_assumed": 22.0,
+        "trades": 411,
+        "step_ms": 1000,
+        "span_s": 2336.1993000507355,
+        "arrival_per_s": 0.1759267713123081,
+        "tick_value": 0.0017999000000000001,
+        "sizes_over_largest_bucket": 31,
+        "sizes_at_ceiling": 0
+      },
+      "layer": "reactive",
+      "levels": {
+        "none": {
+          "fill_rate": {
+            "mean": 0.798661800486618,
+            "half_width": 0.054595075810307564,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -278.07569876883707,
+            "half_width": 273.0372537981829,
+            "excludes_zero": true,
+            "n": 8
+          }
+        },
+        "dp_uncorrected": {
+          "fill_rate": {
+            "mean": 0.8059610705596107,
+            "half_width": 0.05681140164407498,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -281.5809911054934,
+            "half_width": 292.591932985142,
+            "excludes_zero": false,
+            "n": 8
+          }
+        },
+        "dp_corrected": {
+          "fill_rate": {
+            "mean": 0.8111313868613139,
+            "half_width": 0.057748592138971724,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -305.5136123946608,
+            "half_width": 351.80556609330085,
+            "excludes_zero": false,
+            "n": 8
+          }
+        }
+      },
+      "paired_against_no_disclosure": {
+        "dp_uncorrected": {
+          "fill_rate": {
+            "mean": 0.00729927007299272,
+            "half_width": 0.013458221299850998,
+            "excludes_zero": false,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -3.505292336656389,
+            "half_width": 414.5298290423489,
+            "excludes_zero": false,
+            "n": 8
+          }
+        },
+        "dp_corrected": {
+          "fill_rate": {
+            "mean": 0.01246958637469589,
+            "half_width": 0.011486253112873226,
+            "excludes_zero": true,
+            "n": 8
+          },
+          "mm_pnl_per_fill": {
+            "mean": -27.437913625823747,
+            "half_width": 393.7097384405783,
+            "excludes_zero": false,
+            "n": 8
+          }
+        }
+      }
+    }
+  }
+}

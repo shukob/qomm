@@ -1,0 +1,698 @@
+#!/usr/bin/env python3
+"""Generate the QOMM query-oblivious quote circuit and its MP-SPDZ inputs.
+
+The circuit implements the pricing model defined in
+``papers/kyc_private_clob_defmi/private_rfq_dex_project_proposal.md``:
+
+    q_{i,t} = P_i(x, s_{i,t}, m_t)
+
+Market makers pre-register a secret price policy; the user secret-shares the
+request. No market maker ever receives the request itself, so a losing market
+maker does not learn that a request existed.
+
+Layer structure (this is the point of the design):
+
+    layer 1  policy arithmetic for all M market makers   -- SIMD, depth 1
+    layer 2  eligibility gates for all M                 -- SIMD, depth 1
+    layer 3  best-quote selection                        -- binary tree, depth log2(M)
+
+Everything is integer arithmetic on price ticks and lots; no secret division.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import sys
+from pathlib import Path
+
+FIELDS = ("asset", "mid", "half", "slope", "invcoef", "inv", "maxqty", "expiry", "active")
+
+def sentinel_for(bit_length: int, padded_mm: int, max_cost: int) -> int:
+    """Sentinel that pushes ineligible market makers out of the tournament.
+
+    The packed key is ``cost * padded_mm + index``, so the sentinel has to be
+    large enough to lose against every real quote and small enough that the
+    packed key still fits the signed range of the configured bit length. Getting
+    this wrong produces a silently wrong winner, so the check raises instead.
+    """
+    headroom = 1 << (bit_length - 2)
+    sentinel = headroom // padded_mm
+    if sentinel <= max_cost:
+        raise ValueError(
+            f"bit_length={bit_length} is too narrow: packing {padded_mm} makers with costs "
+            f"up to {max_cost} needs at least "
+            f"{(max_cost * padded_mm * 4).bit_length() + 1} bits")
+    return sentinel
+
+
+def _pow2_ceil(n: int) -> int:
+    p = 1
+    while p < n:
+        p <<= 1
+    return p
+
+
+def build_program(
+    n_mm: int,
+    n_parties: int,
+    mode: str,
+    rfs_steps: int,
+    disclose: str,
+    now_t: int,
+    ref_mid: int,
+    band_bps: int,
+    threshold_k: int,
+    threshold_v: int,
+    public_check: bool,
+    n_requests: int = 1,
+    n_assets: int = 1,
+    ref_table: list | None = None,
+    maker_assets: list | None = None,
+    public_maker_assets: bool = False,
+    audit_gates: bool = False,
+    bit_length: int = 63,
+    argmin_arity: int = 2,
+    price_conditionals: int = 0,
+    edabit: bool = False,
+    stop_after: str = "tournament",
+) -> str:
+    """Emit the .mpc source. ``n_mm`` must be a power of two (padded by caller).
+
+    ``stop_after`` cuts the circuit short at a named layer, so the rounds a layer
+    is responsible for can be read off as the increment between two compiles
+    rather than argued for. Each cut still opens something that depends on
+    everything above it: a layer whose result nothing reads is a layer the
+    compiler is free to delete, and a deleted layer costs nothing, which would
+    make the attribution come out backwards.
+    """
+    if stop_after != "tournament" and mode != "rfq":
+        raise ValueError(f"--stop-after names layers of the RFQ circuit; "
+                         f"mode {mode} is built differently")
+    ref_table = ref_table or [ref_mid]
+    maker_assets = maker_assets or [i % n_assets for i in range(n_mm)]
+    lines: list[str] = []
+    w = lines.append
+
+    w('"""QOMM: query-oblivious quote evaluation (generated; do not edit).')
+    w("")
+    w(f"mode={mode} M={n_mm} parties={n_parties} disclose={disclose} "
+      f"bits={bit_length} argmin_arity={argmin_arity} edabit={edabit} "
+      f"price_conditionals={price_conditionals}"
+      + (f" rfs_steps={rfs_steps}" if mode == "rfs" else ""))
+    w('"""')
+    w("")
+    w(f"program.set_bit_length({bit_length})")
+    if edabit:
+        w("# push comparison bit generation into preprocessing")
+        w("program.use_edabit(True)")
+    w("")
+    w(f"M = {n_mm}")
+    w(f"N_PARTIES = {n_parties}")
+    w(f"LARGE = {sentinel_for(bit_length, n_mm, 8 * max(ref_table))}")
+    w(f"NOW_T = {now_t}")
+    w(f"N_ASSETS = {n_assets}")
+    w("# Public reference price per asset. The table is public; which entry the")
+    w("# request selects is not, so the selection has to be oblivious.")
+    w(f"REF_TABLE = {ref_table}")
+    w(f"MAKER_ASSET = {maker_assets}")
+    w(f"REF_MID = {ref_mid}   # only used for the sentinel scale")
+    w("")
+    w("# ---- user request (secret-shared through the party-0 gateway) ----")
+    w(f"N_REQ = {n_requests}")
+    w("req_asset = Array(N_REQ, sint)")
+    w("req_qty = Array(N_REQ, sint)")
+    w("req_dir = Array(N_REQ, sint)   # 0 = user buys (takes ask), 1 = user sells")
+    w("req_entity = Array(N_REQ, sint)")
+    w("for r in range(N_REQ):")
+    w("    req_asset[r] = sint.get_input_from(0)")
+    w("    req_qty[r] = sint.get_input_from(0)")
+    w("    req_dir[r] = sint.get_input_from(0)")
+    w("    req_entity[r] = sint.get_input_from(0)")
+    w("u_asset = req_asset[0]")
+    w("u_qty = req_qty[0]")
+    w("u_dir = req_dir[0]")
+    w("u_entity = req_entity[0]")
+    w("# Every slot runs on the fixed schedule whether or not a real request")
+    w("# arrived. The flag is secret and never branched on, so the circuit shape,")
+    w("# the round count and the byte count are identical either way; it only")
+    w("# stops a dummy slot from moving market-maker state.")
+    w("u_is_real = sint.get_input_from(0)")
+    w("")
+    w("# ---- market-maker price policies, one column per field ----")
+    for f in FIELDS:
+        w(f"col_{f} = Array(M, sint)")
+    w("")
+    w("for i in range(M):")
+    w("    owner = i % N_PARTIES")
+    for f in FIELDS:
+        w(f"    col_{f}[i] = sint.get_input_from(owner)")
+    w("")
+    w("idx = Array(M, sint)")
+    w("for i in range(M):")
+    w("    idx[i] = sint(i)")
+    w("wide_idx = Array(M * N_REQ, sint)")
+    w("for r in range(N_REQ):")
+    w("    for i in range(M):")
+    w("        wide_idx[r * M + i] = sint(i)")
+    w("")
+    w("")
+    w("# ---- oblivious reference-price lookup ----")
+    w("# ref = sum_a (asset == a) * REF_TABLE[a]. Each term multiplies a secret")
+    w("# bit by a public constant, which costs nothing, so the whole lookup is")
+    w("# N_ASSETS equality tests in one layer. Selecting the row publicly would")
+    w("# announce which market the request is for, which is the thing to avoid.")
+    w("ref_secret_per_request = Array(N_REQ, sint)")
+    w("asset_onehot = None")
+    w("for r in range(N_REQ):")
+    w("    onehot = [req_asset[r] == sint(a) for a in range(N_ASSETS)]")
+    w("    if r == 0:")
+    w("        asset_onehot = onehot")
+    w("    acc = onehot[0] * REF_TABLE[0]")
+    w("    for a in range(1, N_ASSETS):")
+    w("        acc = acc + onehot[a] * REF_TABLE[a]")
+    w("    ref_secret_per_request[r] = acc")
+    w("ref_secret = ref_secret_per_request[0]")
+    w("")
+    if public_maker_assets:
+        w("# gather the one-hot bit for each maker's publicly known market")
+        w("asset_gate = Array(M, sint)")
+        w("for i in range(M):")
+        w("    asset_gate[i] = asset_onehot[MAKER_ASSET[i]]")
+        w("")
+    w("# One job serves N_REQ requests. Every per-maker vector is widened to")
+    w("# N_REQ*M so the comparison layers are shared: rounds are a property of the")
+    w("# job, not of the request, which is what makes batching worth doing.")
+    w("WIDE = N_REQ * M")
+    w("def tile_makers(vec):")
+    w("    out = Array(WIDE, sint)")
+    w("    for r in range(N_REQ):")
+    w("        out.assign(vec, r * M)")
+    w("    return out.get_vector()")
+    w("def spread_request(arr):")
+    w("    out = Array(WIDE, sint)")
+    w("    for r in range(N_REQ):")
+    w("        out.assign(arr[r].expand_to_vector(M), r * M)")
+    w("    return out.get_vector()")
+    w("qty_v = spread_request(req_qty)")
+    w("asset_v = spread_request(req_asset)")
+    w("dir_v = spread_request(req_dir)")
+    w("")
+    w("inv_state = Array(M, sint)")
+    w("inv_state.assign(col_inv.get_vector())")
+    w("")
+    w("")
+    w("def pack_key(cost, index_vec):")
+    w('    """Pack the tie-breaking index into the low bits.')
+    w("")
+    w("    Two things fall out of this. Keys become unique, so a strict comparison")
+    w("    is enough and no tie-breaking logic is needed. And the winning index")
+    w("    travels inside the value, so the tournament no longer has to carry a")
+    w("    second secret array and pay a second multiplication at every level.")
+    w('    """')
+    w("    return cost * M + index_vec")
+    w("")
+    w("")
+    w("# The packed key is only ever unpacked after it is opened, by whoever")
+    w("# received it. Doing it in secret would cost a division and a modulo.")
+    w("")
+    w("")
+    w("def min_tree(keys, n):")
+    w('    """Binary tournament: depth log2(n), one comparison and one select per level."""')
+    w("    cur = Array(n, sint)")
+    w("    cur.assign(keys)")
+    w("    size = n")
+    w("    while size > 1:")
+    w("        half = size // 2")
+    w("        a = cur.get_vector(0, half)")
+    w("        b = cur.get_vector(half, half)")
+    w("        cur.assign((a < b).if_else(a, b), 0)")
+    w("        size = half")
+    w("    return cur[0]")
+    w("")
+    w("")
+    w("def min_kary(keys, n, arity):")
+    w('    """Arity-k tournament: depth log_k(n) levels, k(k-1) comparisons per group.')
+    w("")
+    w("    Trades comparison count for circuit depth. Depth costs round trips, which")
+    w("    are the binding constraint over a wide area; comparison count costs")
+    w("    bandwidth, which is not. The best arity therefore depends on the link, so")
+    w("    it is left as a measured parameter rather than a fixed choice.")
+    w('    """')
+    w("    cur = Array(n, sint)")
+    w("    cur.assign(keys)")
+    w("    size = n")
+    w("    while size > 1:")
+    w("        a = min(arity, size)")
+    w("        groups = size // a")
+    w("        # block p holds the p-th member of every group, so each block is contiguous")
+    w("        blocks = [cur.get_vector(p * groups, groups) for p in range(a)]")
+    w("        ranks = []")
+    w("        for p in range(a):")
+    w("            rank = None")
+    w("            for q in range(a):")
+    w("                if p == q:")
+    w("                    continue")
+    w("                less = blocks[q] < blocks[p]")
+    w("                rank = less if rank is None else rank + less")
+    w("            ranks.append(rank)")
+    w("        # the rank is at most arity-1, so the equality does not need the")
+    w("        # full key width. Comparing at full width was costing more rounds")
+    w("        # than the extra tree level it was supposed to remove.")
+    w("        rank_bits = max(2, (a - 1).bit_length() + 1)")
+    w("        winner = None")
+    w("        for p in range(a):")
+    w("            selected = ranks[p].equal(0, rank_bits)")
+    w("            term = selected * blocks[p]")
+    w("            winner = term if winner is None else winner + term")
+    w("        cur.assign(winner, 0)")
+    w("        size = groups")
+    w("    return cur[0]")
+    w("")
+    w("")
+    w("def argmin(keys, n):")
+    if argmin_arity <= 2:
+        w("    return min_tree(keys, n)")
+    else:
+        w(f"    return min_kary(keys, n, {argmin_arity})")
+    w("")
+    w("")
+    w("def quote_layer(inv_vec, ref_secret, now_t):")
+    w('    """One evaluation of P_i(x, s_i, m_t) for every market maker at once."""')
+    w("    mid = tile_makers(col_mid.get_vector())")
+    w("    half = tile_makers(col_half.get_vector())")
+    w("    slope = tile_makers(col_slope.get_vector())")
+    w("    invcoef = tile_makers(col_invcoef.get_vector())")
+    w("    maxqty = tile_makers(col_maxqty.get_vector())")
+    w("    expiry = tile_makers(col_expiry.get_vector())")
+    w("    active = tile_makers(col_active.get_vector())")
+    w("    asset_mm = tile_makers(col_asset.get_vector())")
+    w("    # layer 1: price policy (2 SIMD multiplications, depth 1)")
+    w("    skew = invcoef * tile_makers(inv_vec)")
+    w("    depth = slope * qty_v")
+    w("    # mid is the maker's offset from the reference for its own asset")
+    w("    anchored = mid + spread_request(ref_secret_per_request)")
+    if price_conditionals:
+        w(f"    # {price_conditionals} conditional(s) on secrets in the price rule.")
+        w("    # A branch on a secret is a comparison, and comparisons are what")
+        w("    # rounds are made of --- but every maker is evaluated at once, so")
+        w("    # this costs its depth once rather than once per maker.")
+        for index in range(price_conditionals):
+            bound = 200 * (index + 1)
+            if index % 2 == 0:
+                w(f"    skew = (skew > sint({-bound})).if_else(skew, sint({-bound}))")
+            else:
+                w(f"    skew = (skew < sint({bound})).if_else(skew, sint({bound}))")
+    w("    ask = anchored + half + depth + skew")
+    w("    bid = anchored - half - depth + skew")
+    if stop_after in ("price", "direction"):
+        w("    # Cut before the eligibility layer. Nothing below this line is built,")
+        w("    # so the rounds this circuit costs are the price layer's own.")
+        w("    return ask, bid, None, maxqty")
+    else:
+        w("    # layer 2: eligibility (3 SIMD comparisons + 3 SIMD multiplications, depth 1+cmp)")
+        if public_maker_assets:
+            w("    # The market each maker serves is public business information; only the")
+            w("    # *user's* asset is secret. So the asset gate is a public index into the")
+            w("    # secret one-hot vector, which costs no communication at all, instead of")
+            w("    # an equality test per maker.")
+            w("    g_asset = tile_makers(asset_gate.get_vector())")
+        else:
+            w("    g_asset = asset_mm == asset_v")
+        w("    g_qty = qty_v <= maxqty")
+        if audit_gates:
+            w("    # expiry and the active flag are proved at registration time by the")
+            w("    # policy audit, so re-checking them here would pay for the same fact twice")
+            w("    ok = g_asset * g_qty")
+        else:
+            w("    g_exp = expiry > sint(now_t)")
+            w("    ok = active * g_asset * g_qty * g_exp")
+        w("    return ask, bid, ok, maxqty")
+    w("")
+    w("")
+
+    if disclose == "threshold":
+        w(f"BAND = {band_bps} * REF_MID // 10000")
+        w(f"THRESHOLD_K = {threshold_k}")
+        w(f"THRESHOLD_V = {threshold_v}")
+        w("")
+        w("")
+        w("def threshold_disclosure(ask, ok, maxqty, ref_secret):")
+        w('    """ZK-style threshold statement: >=K independent MMs, >=V size, inside the band."""')
+        w("    lo = ask >= (ref_secret - BAND).expand_to_vector(M)")
+        w("    hi = ask <= (ref_secret + BAND).expand_to_vector(M)")
+        w("    in_band = lo * hi")
+        w("    elig = ok * in_band")
+        w("    size_v = elig * maxqty")
+        w("    elig_a = Array(M, sint)")
+        w("    elig_a.assign(elig)")
+        w("    size_a = Array(M, sint)")
+        w("    size_a.assign(size_v)")
+        w("    n_ok = elig_a[0]")
+        w("    vol = size_a[0]")
+        w("    for i in range(1, M):")
+        w("        n_ok = n_ok + elig_a[i]")
+        w("        vol = vol + size_a[i]")
+        w("    return (n_ok >= sint(THRESHOLD_K)) * (vol >= sint(THRESHOLD_V))")
+        w("")
+        w("")
+
+    if mode == "rfq":
+        w("ask, bid, ok, maxqty = quote_layer(inv_state.get_vector(), ref_secret, NOW_T)")
+        # Each cut opens one value that every layer above it feeds, so nothing
+        # already built can be optimised away and the increment between two cuts
+        # is the layer between them.
+        if stop_after == "price":
+            w("# stage cut: open one value that both priced sides feed")
+            w("stage_out = Array(WIDE, sint)")
+            w("stage_out.assign(ask + bid)")
+            w("stage_out.get_vector().reveal_to(0)")
+            return "\n".join(lines) + "\n"
+        w("# direction stays secret: minimise the user's cost on whichever side applies")
+        w("cost = dir_v.if_else(-bid, ask)")
+        if stop_after == "direction":
+            w("# stage cut: the selection is built, the gates are not")
+            w("stage_out = Array(WIDE, sint)")
+            w("stage_out.assign(cost)")
+            w("stage_out.get_vector().reveal_to(0)")
+            return "\n".join(lines) + "\n"
+        w("cost = ok.if_else(cost, sint(LARGE))")
+        if stop_after == "gates":
+            w("# stage cut: everything but the tournament")
+            w("stage_out = Array(WIDE, sint)")
+            w("stage_out.assign(cost)")
+            w("stage_out.get_vector().reveal_to(0)")
+            return "\n".join(lines) + "\n"
+        w("wide_keys = Array(WIDE, sint)")
+        w("wide_keys.assign(pack_key(cost, wide_idx.get_vector()))")
+        w("best_key = argmin(wide_keys.get_vector(0, M), M)")
+        w("for r in range(1, N_REQ):")
+        w("    argmin(wide_keys.get_vector(r * M, M), M).reveal_to(0)")
+        w("# one opened value carries both the winning price and the winning maker")
+        w("best_key.reveal_to(0)")
+        w("u_dir.reveal_to(0)")
+        if public_check:
+            w("print_ln('QOMM_BEST_KEY=%s', best_key.reveal())")
+        if disclose == "threshold":
+            w("pub = threshold_disclosure(ask, ok, maxqty, ref_secret)")
+            w("print_ln('QOMM_DISCLOSE=%s', pub.reveal())")
+
+    elif mode == "rfm":
+        w("ask, bid, ok, maxqty = quote_layer(inv_state.get_vector(), ref_secret, NOW_T)")
+        w("# two-sided: the direction is never supplied at all")
+        w("ask_cost = ok.if_else(ask, sint(LARGE))")
+        w("bid_cost = ok.if_else(-bid, sint(LARGE))")
+        w("ask_key = argmin(pack_key(ask_cost, idx.get_vector()), M)")
+        w("bid_key = argmin(pack_key(bid_cost, idx.get_vector()), M)")
+        w("ask_key.reveal_to(0)")
+        w("bid_key.reveal_to(0)")
+        if public_check:
+            w("print_ln('QOMM_ASK_KEY=%s', ask_key.reveal())")
+            w("print_ln('QOMM_BID_KEY=%s', bid_key.reveal())")
+        if disclose == "threshold":
+            w("pub = threshold_disclosure(ask, ok, maxqty, ref_secret)")
+            w("print_ln('QOMM_DISCLOSE=%s', pub.reveal())")
+
+    elif mode == "rfs":
+        w(f"RFS_STEPS = {rfs_steps}")
+        w("# Each step depends on the previous winner's inventory: a genuine serial chain.")
+        w("for step in range(RFS_STEPS):")
+        w("    # the reference moves with the slot, still without revealing the asset")
+        w("    ask, bid, ok, maxqty = quote_layer(inv_state.get_vector(), ref_secret + step, NOW_T)")
+        w("    cost = dir_v.if_else(-bid, ask)")
+        w("    cost = ok.if_else(cost, sint(LARGE))")
+        w("    keys = pack_key(cost, idx.get_vector())")
+        w("    best_key = argmin(keys, M)")
+        w("    best_key.reveal_to(0)")
+        w("    # winner absorbs the flow, so the next quote sees a moved inventory.")
+        w("    # Keys are unique, so matching the key identifies the winner without")
+        w("    # opening the index or paying a secret division.")
+        w("    won = keys == best_key.expand_to_vector(M)")
+        w("    signed_qty = u_dir.if_else(qty_v, -qty_v)")
+        w("    real_v = u_is_real.expand_to_vector(M)")
+        w("    inv_state.assign(inv_state.get_vector() + won * signed_qty * real_v, 0)")
+        if public_check:
+            w("    print_ln('QOMM_RFS_STEP_%s_KEY=%s', step, best_key.reveal())")
+        if disclose == "threshold":
+            w("pub = threshold_disclosure(ask, ok, maxqty, ref_secret)")
+            w("print_ln('QOMM_DISCLOSE=%s', pub.reveal())")
+    else:
+        raise ValueError(f"unknown mode {mode}")
+
+    return "\n".join(lines) + "\n"
+
+
+def build_inputs(
+    n_mm: int,
+    n_real_mm: int,
+    n_parties: int,
+    is_real: int,
+    n_requests: int,
+    n_assets: int,
+    ref_table: list,
+    user_asset: int,
+    user_qty: int,
+    user_dir: int,
+    user_entity: int,
+    now_t: int,
+    ref_mid: int,
+    seed: int,
+    audit_gates: bool = False,
+) -> tuple[dict[int, list[int]], dict]:
+    """Deterministic policy fixture. Padding slots are inactive.
+
+    Returns (per-party input list, cleartext reference used to check the result).
+    """
+    rng = random.Random(seed)
+    per_party: dict[int, list[int]] = {p: [] for p in range(n_parties)}
+    for _ in range(n_requests):
+        per_party[0].extend([user_asset, user_qty, user_dir, user_entity])
+    per_party[0].append(int(is_real))
+
+    policies = []
+    for i in range(n_mm):
+        if i < n_real_mm:
+            # makers are spread across every asset, so the requested market is
+            # one of several the same circuit serves
+            asset = i % n_assets
+            pol = {
+                "asset": asset,
+                "mid": rng.randint(-15, 15),   # offset from the asset's reference
+                "half": rng.randint(5, 40),
+                "slope": rng.randint(0, 3),
+                "invcoef": rng.randint(0, 2),
+                "inv": rng.randint(-50, 50),
+                "maxqty": rng.choice([50, 100, 200, 500]),
+                "expiry": now_t + rng.randint(1, 600),
+                "active": 1,
+            }
+        else:  # padding to the next power of two
+            pol = {
+                "asset": 0, "mid": 0, "half": 0, "slope": 0, "invcoef": 0,
+                "inv": 0, "maxqty": 0, "expiry": 0, "active": 0,
+            }
+        policies.append(pol)
+        owner = i % n_parties
+        per_party[owner].extend(pol[f] for f in FIELDS)
+
+    # cleartext reference (what the circuit must reproduce)
+    best_price = None
+    best_mm = None
+    best_ask = None
+    best_bid = None
+    best_ask_mm = None
+    best_bid_mm = None
+    quotes = []
+    for i, pol in enumerate(policies):
+        skew = pol["invcoef"] * pol["inv"]
+        depth = pol["slope"] * user_qty
+        anchor = ref_table[user_asset] + pol["mid"]
+        ask = anchor + pol["half"] + depth + skew
+        bid = anchor - pol["half"] - depth + skew
+        ok = pol["asset"] == user_asset and user_qty <= pol["maxqty"]
+        if not audit_gates:
+            ok = ok and pol["active"] == 1 and pol["expiry"] > now_t
+        quotes.append({"mm": i, "ask": ask, "bid": bid, "eligible": ok})
+        if not ok:
+            continue
+        if best_ask is None or ask < best_ask:
+            best_ask, best_ask_mm = ask, i
+        if best_bid is None or bid > best_bid:
+            best_bid, best_bid_mm = bid, i
+        cost = -bid if user_dir == 1 else ask
+        if best_price is None or cost < best_price:
+            best_price, best_mm = cost, i
+    reference = {
+        "best_cost": best_price,
+        "best_price": (-best_price if user_dir == 1 and best_price is not None else best_price),
+        "best_mm": best_mm,
+        "best_ask": best_ask,
+        "best_bid": best_bid,
+        "best_ask_mm": best_ask_mm,
+        "best_bid_mm": best_bid_mm,
+        "eligible_count": sum(1 for q in quotes if q["eligible"]),
+        "quotes": quotes,
+    }
+    return per_party, reference
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--n-mm", type=int, default=16)
+    ap.add_argument("--n-parties", type=int, default=7)
+    ap.add_argument("--mode", choices=("rfq", "rfm", "rfs"), default="rfq")
+    ap.add_argument("--rfs-steps", type=int, default=5)
+    ap.add_argument("--disclose", choices=("none", "threshold"), default="none")
+    ap.add_argument("--now-t", type=int, default=1000)
+    ap.add_argument("--ref-mid", type=int, default=100000)
+    ap.add_argument("--n-requests", type=int, default=1,
+                    help="requests served by one job; rounds are per job, so batching "
+                         "is the way to lower rounds per quote")
+    ap.add_argument("--public-maker-assets", action="store_true",
+                    help="treat which market a maker serves as public, so the asset "
+                         "gate becomes a free lookup instead of an equality test")
+    ap.add_argument("--audit-gates", action="store_true",
+                    help="drop expiry and the active flag from the circuit; the "
+                         "registration-time policy audit already proves them")
+    ap.add_argument("--n-assets", type=int, default=1,
+                    help="assets the one circuit serves; the requested one stays secret")
+    ap.add_argument("--band-bps", type=int, default=20)
+    ap.add_argument("--threshold-k", type=int, default=5)
+    ap.add_argument("--threshold-v", type=int, default=1000)
+    ap.add_argument("--user-qty", type=int, default=100)
+    ap.add_argument("--user-dir", type=int, default=0)
+    ap.add_argument("--user-asset", type=int, default=0)
+    ap.add_argument("--user-entity", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--bit-length", type=int, default=63)
+    ap.add_argument("--price-conditionals", type=int, default=0,
+                    help="conditionals on secrets to add to the price rule. The "
+                         "language already allows these through min and max; this "
+                         "is here to price them in rounds, which is the only cost "
+                         "the language cannot derive on its own")
+    ap.add_argument("--argmin-arity", type=int, default=2,
+                    help="2 = binary tournament; larger trades comparisons for depth; "
+                         "set to the padded market-maker count for a single all-pairs layer")
+    ap.add_argument("--edabit", action="store_true",
+                    help="generate comparison bits in preprocessing")
+    ap.add_argument("--is-real", type=int, default=1, choices=(0, 1),
+                    help="0 emits a cover slot: same circuit, no state change")
+    ap.add_argument("--no-public-check", action="store_true")
+    ap.add_argument("--stop-after", default="tournament",
+                    choices=("price", "direction", "gates", "tournament"),
+                    help="cut the circuit after a named layer, so the rounds that "
+                         "layer costs can be read as an increment between compiles. "
+                         "RFQ only: the other modes have a different shape and "
+                         "attributing their cost would need its own cuts.")
+    ap.add_argument("--inputs-only", action="store_true",
+                    help="skip emitting the circuit; a resident service compiles "
+                         "it once and only the inputs change per request")
+    ap.add_argument("--out-program", type=Path, required=True)
+    ap.add_argument("--out-input-dir", type=Path, required=True)
+    ap.add_argument("--out-reference", type=Path, required=True)
+    args = ap.parse_args()
+
+    padded = _pow2_ceil(args.n_mm)
+    # spread the reference prices apart so a wrong asset selection is obvious
+    ref_table = [args.ref_mid + 5_000 * a for a in range(args.n_assets)]
+    if not 0 <= args.user_asset < args.n_assets:
+        print(f"error: --user-asset must be below --n-assets", file=sys.stderr)
+        return 5
+    try:
+        sentinel_for(args.bit_length, padded, 8 * max(ref_table))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 4
+    # A resident service compiles the circuit once and then only the inputs
+    # change, so building the program text again per request is pure waste ---
+    # and it is the larger half of what generation costs.
+    src = "" if args.inputs_only else build_program(
+        n_mm=padded,
+        n_parties=args.n_parties,
+        mode=args.mode,
+        rfs_steps=args.rfs_steps,
+        disclose=args.disclose,
+        now_t=args.now_t,
+        ref_mid=args.ref_mid,
+        band_bps=args.band_bps,
+        threshold_k=args.threshold_k,
+        threshold_v=args.threshold_v,
+        public_check=not args.no_public_check,
+        n_requests=args.n_requests,
+        n_assets=args.n_assets,
+        ref_table=ref_table,
+        maker_assets=[i % args.n_assets for i in range(padded)],
+        public_maker_assets=args.public_maker_assets,
+        audit_gates=args.audit_gates,
+        bit_length=args.bit_length,
+        argmin_arity=(padded if args.argmin_arity <= 0 else args.argmin_arity),
+        stop_after=args.stop_after,
+        price_conditionals=args.price_conditionals,
+        edabit=args.edabit,
+    )
+    if not args.inputs_only:
+        args.out_program.parent.mkdir(parents=True, exist_ok=True)
+        args.out_program.write_text(src, encoding="utf-8")
+
+    per_party, reference = build_inputs(
+        n_mm=padded,
+        n_real_mm=args.n_mm,
+        n_parties=args.n_parties,
+        is_real=args.is_real,
+        n_requests=args.n_requests,
+        n_assets=args.n_assets,
+        ref_table=ref_table,
+        user_asset=args.user_asset,
+        user_qty=args.user_qty,
+        user_dir=args.user_dir,
+        user_entity=args.user_entity,
+        now_t=args.now_t,
+        ref_mid=args.ref_mid,
+        seed=args.seed,
+        audit_gates=args.audit_gates,
+    )
+    args.out_input_dir.mkdir(parents=True, exist_ok=True)
+    for party, values in per_party.items():
+        path = args.out_input_dir / f"Input-P{party}-0"
+        path.write_text(" ".join(str(v) for v in values) + "\n", encoding="utf-8")
+
+    # the circuit opens one packed key, so the reference carries the same packing
+    if reference["best_cost"] is not None:
+        reference["best_key"] = reference["best_cost"] * padded + reference["best_mm"]
+    if reference["best_ask"] is not None:
+        reference["ask_key"] = reference["best_ask"] * padded + reference["best_ask_mm"]
+        reference["bid_key"] = (-reference["best_bid"]) * padded + reference["best_bid_mm"]
+    # With no eligible maker the circuit legitimately answers "no quote": every
+    # key is the sentinel, so the smallest is the one at index zero. The
+    # reference has to expect that rather than treat it as a mismatch.
+    sentinel = sentinel_for(args.bit_length, padded, 8 * max(ref_table))
+    if reference["best_cost"] is None:
+        reference["no_eligible_maker"] = True
+        reference["best_cost"] = sentinel
+        reference["best_mm"] = 0
+        reference["best_key"] = sentinel * padded
+    else:
+        reference["no_eligible_maker"] = False
+    if reference["best_ask"] is None:
+        reference["best_ask"] = sentinel
+        reference["best_ask_mm"] = 0
+        reference["ask_key"] = sentinel * padded
+        reference["best_bid"] = -sentinel
+        reference["best_bid_mm"] = 0
+        reference["bid_key"] = sentinel * padded
+    reference["is_real"] = args.is_real
+    reference["n_assets"] = args.n_assets
+    reference["ref_table"] = ref_table
+    reference["user_asset"] = args.user_asset
+    reference["padded_mm"] = padded
+    reference["real_mm"] = args.n_mm
+    reference["mode"] = args.mode
+    args.out_reference.write_text(json.dumps(reference, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({"padded_mm": padded, "real_mm": args.n_mm, "mode": args.mode,
+                      "best_price": reference["best_price"], "best_mm": reference["best_mm"]}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

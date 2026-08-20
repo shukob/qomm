@@ -1,0 +1,17 @@
+{
+  "config": {
+    "bit_length": 31,
+    "delays": [
+      1.0,
+      15.0
+    ],
+    "mp_spdz_root": "/Users/shukob/work/qomm/MP-SPDZ",
+    "n_mm": 16,
+    "nodes": 7,
+    "out": "artifacts/three_times.json",
+    "quorum": 5,
+    "rfs_interval_ms": 1000.0,
+    "slots": 3
+  },
+  "rows": []
+}

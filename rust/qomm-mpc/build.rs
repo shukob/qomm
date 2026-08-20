@@ -1,0 +1,130 @@
+//! Compile the C++ shim against MP-SPDZ's headers and link its shared library.
+//!
+//! MP-SPDZ is not vendored and not built here. It is a large C++ tree with its
+//! own dependencies (GMP, libsodium, OpenSSL, Boost) and its own build; asking
+//! cargo to drive that would put a forty-minute C++ build behind every `cargo
+//! check`. Instead the crate points at an existing checkout through
+//! `MP_SPDZ_ROOT`, and compiles without the engine when that is unset --- so the
+//! workspace still builds on a machine that has no MP-SPDZ, which is most of
+//! them.
+//!
+//! The flags are not written down here. They are asked of MP-SPDZ's own
+//! `CONFIG`, because several of them change the layout of the types the shim
+//! passes across the boundary: `-DGFP_MOD_SZ=4` sets how many limbs a field
+//! element has, `-DUSE_GF2N_LONG` which binary field is compiled in. A shim
+//! built without them links against `libSPDZ` without complaint and then reads
+//! the wrong bytes out of every object it is handed --- which shows up as a
+//! segmentation fault in all seven parties at once, and not as a build error.
+//! Reading the flags from the same file the engine's own objects were built
+//! from is what makes that class of failure impossible rather than merely
+//! unlikely.
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn main() {
+    // Declared unconditionally, so the compiler can tell a misspelt cfg from an
+    // absent engine rather than warning about the one every build without a
+    // checkout uses.
+    println!("cargo::rustc-check-cfg=cfg(have_spdz)");
+    println!("cargo:rerun-if-env-changed=MP_SPDZ_ROOT");
+    println!("cargo:rerun-if-changed=shim/qomm_spdz.cpp");
+
+    let Some(root) = std::env::var_os("MP_SPDZ_ROOT").map(PathBuf::from) else {
+        println!("cargo:warning=MP_SPDZ_ROOT is unset; building without the engine");
+        return;
+    };
+    let root = root.canonicalize().unwrap_or(root);
+    if !root.join("libSPDZ.so").exists() && !root.join("libSPDZ.a").exists() {
+        println!("cargo:warning=no libSPDZ in {}; run `make libSPDZ.so` there first",
+                 root.display());
+        return;
+    }
+    println!("cargo:rerun-if-changed={}", root.join("CONFIG").display());
+
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let object = out.join("qomm_spdz.o");
+    let source = std::fs::canonicalize("shim/qomm_spdz.cpp").expect("the shim");
+
+    // Compiled from inside the checkout: CONFIG's include paths are `-I.` and
+    // `-I./deps`, which mean the checkout and nowhere else.
+    let status = Command::new("c++")
+        .current_dir(&root)
+        .args(engine_flags(&root))
+        .args(["-fPIC", "-c"])
+        .arg(&source)
+        .arg("-o").arg(&object)
+        .status()
+        .expect("a C++ compiler");
+    assert!(status.success(), "the shim did not compile against {}", root.display());
+
+    let archive = out.join("libqomm_spdz.a");
+    let _ = std::fs::remove_file(&archive);          // `ar crs` appends to an existing one
+    let status = Command::new("ar").arg("crs").arg(&archive).arg(&object)
+        .status().expect("ar");
+    assert!(status.success());
+
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=qomm_spdz");
+    println!("cargo:rustc-link-search=native={}", root.display());
+    println!("cargo:rustc-link-lib=dylib=SPDZ");
+    println!("cargo:rustc-link-lib=dylib=stdc++");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", root.display());
+    // The shim's own object refers to OpenSSL and Boost directly --- it
+    // instantiates the machine, and the machine's templates reach them --- so
+    // naming libSPDZ is not enough. The linker does not follow a shared
+    // library's own dependencies to resolve someone else's references, and the
+    // failure is a page of undefined symbols with names from Boost headers, not
+    // anything that mentions MP-SPDZ. Passing the engine's own link line
+    // through is both the fix and the guarantee that it stays the same line.
+    for flag in config_variable(&root, "LDLIBS") {
+        println!("cargo:rustc-link-arg={flag}");
+    }
+    println!("cargo:rustc-cfg=have_spdz");
+}
+
+/// The flags MP-SPDZ compiled itself with, from MP-SPDZ.
+///
+/// `CONFIG.mine` is the local override and may not exist; `-include` rather than
+/// `include` so a checkout without one still answers. `-Werror` is dropped: the
+/// shim is not MP-SPDZ's code and should not be held to MP-SPDZ's warning
+/// discipline, and a warning there is not a reason to fail a measurement build.
+///
+/// The environment is cleared for the call, and that is not caution. MP-SPDZ's
+/// CONFIG builds its flags with `CFLAGS += ... $(DEBUG) ...`, and make expands
+/// an undefined variable from the environment when it has one. Cargo sets
+/// `DEBUG` for every build script --- to `true` or `false`, meaning the Rust
+/// profile --- so an inherited environment silently appends the word `false` to
+/// the C++ compiler's arguments, where it is read as the name of an input file.
+/// Nothing about the resulting error mentions either make or cargo.
+fn engine_flags(root: &Path) -> Vec<String> {
+    let flags = config_variable(root, "CFLAGS");
+    assert!(flags.iter().any(|f| f.starts_with("-DGFP_MOD_SZ")),
+            "CONFIG gave no -DGFP_MOD_SZ; the shim would mis-read every field element");
+    // A CFLAGS entry that is not an option is a variable that expanded to
+    // something unintended. Caught here it names itself; passed through, it
+    // reaches the compiler as a filename and the message is about that.
+    if let Some(stray) = flags.iter().find(|f| !f.starts_with('-')) {
+        panic!("CONFIG produced the non-option `{stray}` in CFLAGS; \
+                some variable it interpolates expanded to that");
+    }
+    flags.into_iter().filter(|f| f != "-Werror").collect()
+}
+
+/// One variable, as MP-SPDZ's own build would expand it.
+fn config_variable(root: &Path, name: &str) -> Vec<String> {
+    let makefile = format!("include CONFIG\n-include CONFIG.mine\nflags:\n\t@echo $({name})\n");
+    let path = PathBuf::from(std::env::var("OUT_DIR").unwrap())
+        .join(format!("{}.mk", name.to_lowercase()));
+    std::fs::write(&path, &makefile).expect("the flag query");
+    let out = Command::new("make")
+        .current_dir(root)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .arg("-s").arg("-f").arg(&path).arg("flags")
+        .output()
+        .expect("make, to read MP-SPDZ's own flags");
+    assert!(out.status.success(),
+            "could not read {name} from {}: {}",
+            root.join("CONFIG").display(), String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).split_whitespace().map(str::to_string).collect()
+}
