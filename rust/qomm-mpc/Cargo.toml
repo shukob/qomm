@@ -7,7 +7,7 @@ description = "MP-SPDZ as a library: run the quote circuit and read the round an
 build = "build.rs"
 
 [dependencies]
-qomm-measure.workspace = true
+qomm-measure = { git = "https://github.com/shukob/zkpi" }
 
 [[bin]]
 name = "qomm-party"

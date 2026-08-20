@@ -2,6 +2,70 @@
 
 Query-oblivious market making: quote without disclosing the request, the pricing rule, or the market.
 
+## What it does
+
+```mermaid
+flowchart TB
+    U["a user's request<br/>asset, size, side"]
+
+    subgraph transport["fixed cadence, additive shares, relay hops"]
+        REL["every user sends the same bytes<br/>every slot, whether or not they asked"]
+    end
+
+    subgraph mpc["seven computing nodes, malicious Shamir"]
+        direction TB
+        PRICE["price every maker at once<br/>this is width, and it is free"]
+        GATE["eligibility<br/>one comparison layer"]
+        TOUR["binary tournament<br/>log2(M) comparison layers"]
+        PRICE --> GATE --> TOUR
+    end
+
+    OUT["one opened key:<br/>the winning price and the winner"]
+
+    U --> REL --> PRICE
+    TOUR --> OUT
+
+    NOTE["the trace is the same<br/>whether or not anyone asked"]
+    REL -.- NOTE
+    mpc -.- NOTE
+
+    classDef cheap fill:#E8EFE6,stroke:#8FA88A,color:#243024
+    classDef dear fill:#F3E4E3,stroke:#B08C89,color:#3A2A29
+    class PRICE cheap
+    class GATE,TOUR dear
+```
+
+## What it is made of
+
+```mermaid
+flowchart TB
+    RULE["a maker's pricing rule<br/>a small expression language"]
+
+    subgraph checker["what the checker derives, with no proof"]
+        BITS["the bit width<br/>the circuit needs"]
+        RANGE["the output range<br/>is bounded"]
+        PLAN["the audit obligations"]
+    end
+
+    subgraph circuit["what runs"]
+        GEN["generate the .mpc program"]
+        COMP["MP-SPDZ compiler<br/>rounds a property of the circuit"]
+        ENG["MP-SPDZ engine<br/>rounds a property of the protocol"]
+        GEN --> COMP --> ENG
+    end
+
+    subgraph read["how it is measured"]
+        SHIM["qomm-mpc links the engine<br/>and reads its own counters"]
+        CHAN["rounds broken out<br/>by communication channel"]
+        SHIM --> CHAN
+    end
+
+    RULE --> BITS --> GEN
+    RULE --> RANGE
+    RULE --> PLAN
+    ENG --> SHIM
+```
+
 Exported from a single research tree by `scripts/export_repos.py`, which is why
 the layout is regular across the three repositories and why nothing here is
 hand-maintained. Corrections are welcome; they belong upstream, and the export
@@ -14,7 +78,6 @@ Rust:
 - `rust/qomm-dsl`
 - `rust/qomm-proofs`
 - `rust/qomm-sim`
-- `rust/qomm-measure`
 - `rust/qomm-mpc`
 
 Python:

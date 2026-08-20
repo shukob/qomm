@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["qomm-dsl", "qomm-proofs", "qomm-sim", "qomm-measure", "qomm-mpc"]
+members = ["qomm-dsl", "qomm-proofs", "qomm-sim", "qomm-mpc"]
 
 [workspace.package]
 version = "0.1.0"
@@ -28,5 +28,5 @@ qomm-zk = { git = "https://github.com/shukob/zkpi" }
 qomm-proofs = { path = "qomm-proofs" }
 qomm-dsl = { path = "qomm-dsl" }
 qomm-sim = { path = "qomm-sim" }
-qomm-measure = { path = "qomm-measure" }
+qomm-measure = { git = "https://github.com/shukob/zkpi" }
 qomm-mpc = { path = "qomm-mpc" }
