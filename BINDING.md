@@ -270,9 +270,142 @@ proofs this stack already produces. `eprint 2026/337` combines it with
 publicly auditable MPC directly. **This is the direction to read next, and the
 seam is what makes trying it a substitution rather than a rewrite.**
 
-Only `input_check.py` is ported. The rest of `zk/` still takes a `Pedersen`
-directly, and porting it is a day's work that would buy no further insight until
-the VOLE-in-the-Head transform exists to port *to*.
+---
+
+## 4.6 VOLE-in-the-Head, implemented, and what the 113x became
+
+The transform is now in `zk/voleith.py`, so the question above is answered by a
+measurement rather than by a citation. What it does, in the order it happens:
+
+1. `repeats` GGM trees of `2^depth` leaves each. Each leaf seeds a vector of
+   `n` field elements. The prover knows every leaf.
+2. `u = sum_x t_x` and `V = -sum_x x*t_x`. The prover publishes `d = w - u`,
+   which is what commits the witness.
+3. `Delta` for each tree comes from Fiat--Shamir over everything already
+   published, and the prover opens all leaves but `Delta` by revealing the
+   `depth` sibling seeds on the co-path.
+4. The verifier rebuilds those leaves and forms
+   `Q = sum_{x != Delta} (Delta - x) t_x = Delta*u + V`, folds in `d`, and
+   checks the linear combination against the opening.
+
+Guessing `Delta` is the only way to cheat, so soundness is `2^-depth` per tree
+and the default 8 x 16 is 128 bits --- the parameter set FAEST measures as its
+fastest.
+
+**Both arms prove the same statement and both are publicly verifiable**, which
+is what makes the comparison mean anything. `host-a`, n=30, 167 inputs:
+
+| | prove | verify | proof |
+|---|---:|---:|---:|
+| Pedersen (ed25519) | 18.64 ms | 15.48 ms | 5,440 B |
+| **VOLE-in-the-Head** | **73.06 ms** | **69.94 ms** | **45,616 B** |
+| ratio | **3.93x** | **4.52x** | **8.39x** |
+
+**So the 113x was not an advantage over Pedersen. It was the price of not being
+checkable.** A designated-verifier VOLE commitment is a field multiply, and a
+Pedersen commitment is a scalar multiplication, and that gap is real --- but
+only the holder of `Delta` can check the cheap one, and the party that has to
+check is a regulator who was not there. Buying the check back costs 3.9x on the
+clock and 8.4x on the wire, in the other direction.
+
+### What is actually expensive, which is not the trees
+
+The proof breaks down as:
+
+| part | bytes | |
+|---|---:|---|
+| VOLE consistency corrections | **40,080** | **88%** |
+| witness correction `d` | 2,672 | the commitment itself |
+| co-paths | 2,048 | 16 trees x 8 seeds |
+| punctured leaf commitments | 512 | |
+| tags, opening, root | 304 | |
+
+**The all-but-one openings are 4% of the proof.** The 88% is `repeats - 1`
+corrections of `n` field elements each, and they are there because each tree
+produces its own `u` and the witness has to be committed against one of them.
+
+That term is why the paper's "2x the designated-verifier communication" does not
+carry over. **Over `F_2`, where FAEST lives, those corrections are bits.** Over a
+127-bit prime, which is where this stack's arithmetic lives, they are 16-byte
+elements, and the same construction with the same parameters produces a proof
+`8*127` times larger per element. The computation moves for the same reason:
+17.8 MB of PRG output against FAEST's 819 kB at identical tree parameters,
+because a leaf here expands to `n` field elements rather than `n` bits.
+
+**The finding generalises past this module.** VOLE-in-the-Head is cheap when the
+witness is bits. Every cost it has scales with the width of a witness element,
+and a market-making policy is not bits.
+
+### The trade-off curve, which reproduces a published one
+
+Deeper trees mean fewer repetitions for the same 128 bits, hence fewer
+corrections --- bought with `2^depth` PRG calls each. At 167 inputs:
+
+| depth | repetitions | proof | hashes |
+|---:|---:|---:|---:|
+| 4 | 32 | 89,136 B | 1,024 |
+| **8** | **16** | **45,616 B** | **8,192** |
+| 12 | 11 | 32,080 B | 90,112 |
+| 16 | 8 | 23,856 B | 1,048,576 |
+
+FAEST's table 2 has the same shape on the same axis --- 7,506 B at `q = 2^7`
+down to 5,559 B at `q = 2^11`, for 4.2x the signing time. Getting a published
+curve back out of a harness built for a different statement is the reason to
+believe the harness.
+
+### The escape, which is arithmetic and not a measurement
+
+Section 6.1 of the paper replaces the repetition code with a linear code: the
+correction becomes `ceil(n/k_C) * (n_C - k_C)` elements against `n_C` trees, and
+Singleton bounds the distance at `n_C - k_C + 1`. Sweeping the rate at
+`depth = 8`, the best MDS parameters are `[31, 16, 16]`, giving **10,816 B for
+15,872 hashes** --- 4.2x smaller than the repetition code for 1.9x the
+computation, and still 2.0x Pedersen's proof.
+
+**This is not implemented.** It is here so that the distance between what was
+measured and what the construction can reach is a number rather than a hope.
+
+### What it buys, which is real and is not speed
+
+Three things, and none of them is on the table above.
+
+**No group**, so nothing for the MPC field to match and section 2 stops being a
+question. **Symmetric primitives only**, so section 6 stops being one.
+**The commitment is smaller than Pedersen's** --- 2,672 bytes against 5,344,
+because a correction is a 16-byte field element and a commitment is a 32-byte
+group element. It is the *proof* that is large, not the commitment.
+
+### One opening, and the implementation refuses a second
+
+After `Delta` is published the correlation binds nothing, so a second statement
+about the same commitment proves nothing. Baum and Zok (`eprint 2026/337`)
+formalise this as *one-time* linear homomorphism and buy a second opening by
+committing to the opening in the random oracle. `Prover.prove` raises
+`OneTimeError` rather than documenting the restriction, because a scheme that
+silently permits an unsound operation is worse than one that lacks the feature.
+
+**This is the property that would bite hardest in deployment.** Pedersen
+commitments to a maker's policy are opened against every quote for the life of
+the policy. VOLEitH commitments cannot be, so a policy would have to be
+recommitted per quote or carried forward through delayed openings, and neither
+is free.
+
+### The caveat on the clock, stated as a bound
+
+Pedersen runs on libsodium through PyNaCl, which is C. VOLEitH runs on
+`hashlib`, also C, with the field arithmetic in CPython. Measured on the same
+host: **the XOF output alone is 30.4 ms of the 73.06**, and the XOF plus the
+packing is 54.3 ms. So a compiled implementation that made everything except the
+PRG free would still land near 30 ms, and the honest reading of the 3.93x is
+**somewhere between 1.6x and 3.9x, with the language accounting for at most the
+difference**. The byte counts have no such caveat.
+
+---
+
+Only `input_check.py` is ported to the per-value seam. The rest of `zk/` still
+takes a `Pedersen` directly, and porting it would buy nothing further: what the
+comparison needed was a second seam at the level of a statement, and that is
+what `LinearProofScheme` is.
 
 ---
 
@@ -478,6 +611,21 @@ predictions that landed is advertising a discipline rather than reporting one.
 | the check adds 1 to 3 rounds | **1** | landed |
 | cross-region at a batch of 32: 347 rounds, 0.38 quotes/s | 1,314 rounds, 0.036 --- extrapolating a ratio that was itself growing | 10x too generous, **and the ratio was an artifact** |
 | compiling with `-F` instead of `-P` gives 2--6x traffic and 1.0--1.4x rounds | **2.00x and 1.00x** | landed |
+| VOLE-in-the-Head co-paths cost `repeats*(depth*16 + 32)` = 2,560 B | **2,560 B** | landed exactly |
+| VOLE-in-the-Head proof is 5--7 kB at 167 inputs | **45,616 B** | 7x too small |
+| it proves in 8--20 ms and verifies in 8--20 | **73.06 and 69.94 ms** | 4x too fast |
+| **the transform lands within 0.5--1.5x of Pedersen** | **3.93x and 4.52x** | **direction right, number wrong** |
+| its proof is within 1.5x of Pedersen's | 8.39x | wrong |
+| the one-time property is a real constraint and not a detail | it is; `OneTimeError` | landed |
+
+**All five VOLE-in-the-Head misses have one cause.** The construction was costed
+as though the witness were bits, which is FAEST's setting and the setting every
+published number for it is in. It is not this stack's setting. Over a 127-bit
+prime every term that FAEST pays in bits --- the consistency corrections, the
+PRG output per leaf --- is paid in 16-byte elements, and the arithmetic was
+written down without that substitution. **The prediction that mattered was still
+right in direction**: the 113x advantage does not survive the transform. It was
+wrong about which side of one the answer lands on.
 
 **The two most important predictions in this document were right the first
 time**, and were then buried under a measurement that contradicted them for a
@@ -486,7 +634,9 @@ measurement said fourteen times, the arithmetic was correct and the harness was
 misconfigured --- and the tool was printing the reason on every run.
 
 That is the finding to carry out of here. The other errors were counting
-mistakes, which are cheap to find once someone counts again. **This one was a
+mistakes, which are cheap to find once someone counts again --- and the
+VOLE-in-the-Head row above is a third kind, which is taking a published cost
+model and not checking which field it was written for. **This one was a
 disagreement between theory and measurement that got resolved in favour of the
 measurement without asking why they disagreed**, and it cost four sections and a
 published slide.
