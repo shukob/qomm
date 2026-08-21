@@ -445,6 +445,214 @@ concluded the check could not run, without checking whether a different split of
 the budget would fit. Both were arithmetic written down here. The measurement
 that settles it took one run.
 
+### 0.6.7 Three questions about the matched field, and one answer
+
+**Would a different group make it cheaper? No, and this repository already
+measured why.** The matched field's cost is set by the field *size*, and 128-bit
+security forces a scalar field of about 256 bits for **any** discrete-log group,
+elliptic curve or multiplicative. So no discrete-log scheme shrinks the MPC
+field. What the group does change is the speed of the proofs, and there the curve
+wins by a lot --- `zk_bench.json`, same host, same proof, seven fields and seven
+parties:
+
+| backend | prove | verify | share check |
+|---|---:|---:|---:|
+| ed25519 | 14.4 ms | 15.5 ms | 7.6 ms |
+| modp multiexp | 4,865.6 ms | 7,358.6 ms | 1,419.0 ms |
+| ratio | **338x** | **475x** | **187x** |
+
+So a non-curve group is worse on one axis and neutral on the other. **The one
+direction that could shrink the field is lattice commitments**, whose security
+comes from dimension rather than modulus size --- a homomorphic lattice
+commitment can live over a 32- or 64-bit modulus. What stops it is shape rather
+than size: lattice sigma protocols need rejection sampling, so the response is
+not a clean linear function of the witness, and `threshold_sigma`'s method ---
+each node computes its own piece and they Lagrange-combine --- does not survive
+that.
+
+**What throughput does it leave cross-region?** Round counts do not depend on
+machine load and a wide-area quote is round-trip bound, so this is computed from
+measured rounds times the round trip rather than from a wall clock. Batching does
+not amortise the rounds away: they grow at **3.48 a quote** in the default field
+and **7.02** in the matched one.
+
+| | batch | rounds | round trips | per quote | quotes/s | quote age |
+|---|---:|---:|---:|---:|---:|---:|
+| default field | 32 | 177 | 42.5 s | 1.33 s | **0.75** | 42 s |
+| **matched field** | **32** | 347 | 83.2 s | 2.60 s | **0.38** | 83 s |
+| matched field | 128 | 1021 | 245.0 s | 1.91 s | 0.52 | 245 s |
+
+**Twenty-three quotes a minute**, and the ceiling is about 0.52 because rounds
+grow with the batch. For cross-border request-for-quote in instruments that trade
+by request in the first place, that is comfortable. **The binding limit is not
+throughput but age**: a batch of 32 leaves a quote up to 83 seconds old, a batch
+of 128 up to 245, against `staleness.json` where 96 seconds is 1.34 to 1.75 times
+the within-block floor and 300 seconds is 1.63 to 4.00. Batches of 8 to 32 are
+where the two constraints meet.
+
+**And what does post-quantum cost?** The largest part of the answer is that
+**the confidential computation is already post-quantum**: Shamir with an honest
+majority is information-theoretically secure, so there is no assumption for a
+quantum computer to break and the MPC layer needs nothing.
+
+The next part is nearly as favourable. Pedersen commitments are **perfectly**
+hiding and only computationally binding, so a quantum adversary can open a
+commitment to a value it does not hold and can **never** learn the value. What
+quantum takes away is the ability to prove, never the ability to hide.
+
+What breaks is the signatures, the range proofs, the sigma protocols and the
+quote proof, the one-of-many membership proof, and the adaptor signatures in the
+cross-ledger settlement. For the signatures the cost is **size, not speed** ---
+ML-DSA signs about as fast as Ed25519 in optimised implementations --- and the
+maker update path is where the bytes land:
+
+| signature | one full policy update | vs now | at 10 updates a second, 16 makers |
+|---|---:|---:|---:|
+| Ed25519 | 10,836 B | 1.0x | 0.19 MB/s |
+| ML-DSA-44 | 159,264 B | **14.7x** | 2.83 MB/s |
+| ML-DSA-65 | 215,271 B | 19.9x | 3.83 MB/s |
+| SLH-DSA-128s | 501,732 B | 46.3x | 8.92 MB/s |
+
+Fifteen times the bytes, and at rates a real market maker uses it is under three
+megabytes a second. The sizes are the standard's; **no timing is claimed**,
+because the only implementation available here is pure Python and its numbers
+would not represent an optimised one.
+
+**The proofs have no drop-in, and that is where the three questions become one**
+(0.6.8 works this through, and 0.6.9 asks whether a quantum network changes it).
+Post-quantum homomorphic commitments are lattice commitments, which is the same
+direction that could shrink the matched field --- and the same rejection sampling
+blocks both. Whichever reason takes you to lattices, the work that has to be done
+is the same work: an assembly method that does not need the response to be linear
+in the witness.
+
+### 0.6.8 Post-quantum, in the detail the summary above skips
+
+**Scope first, because the two halves of the stack are not in the same
+difficulty.** There are two kinds of proof here, and only one of them has a
+structural problem:
+
+| | who proves | which proofs | what post-quantum costs |
+|---|---|---|---|
+| **single prover** | the maker, knowing its own secret | policy audit, state audit, range proofs, the input check | **size only** |
+| **threshold-assembled** | seven nodes, about a value none of them knows | **the quote proof**, zkPI | **structural** |
+
+`policy_audit.py` and `state_audit.py` do not import `threshold_sigma` at all ---
+a maker proving something about its own policy needs no help. So the hard case is
+the quote proof and zkPI, which is also the system's headline claim.
+
+**Why the assembly works today.** A sigma response is `z = k + c*w`, which is
+affine in the witness, so each node computes `z_i = k_i + c*w_i` from its own
+share and the pieces Lagrange-combine into `z` with no node ever seeing `w`.
+That is `node_response` and `combine_responses`, and it is the reason this design
+uses sigma protocols rather than a general-purpose SNARK.
+
+**Three obstacles under lattices, in increasing difficulty.**
+
+**One, size.** A sigma proof here is `4,960 bytes` a step, measured
+(`state_audit.json`). The lattice equivalents are kilobytes to tens of
+kilobytes, depending on construction --- from the literature, not measured here.
+That is bandwidth and nothing else; the design does not change.
+
+**Two, rejection sampling.** A lattice response `z = y + c*s` leaks `s` unless
+the prover sometimes throws it away and restarts, and that abort test is on the
+**combined** `z` rather than on any share. So the nodes would have to
+reconstruct `z` to decide --- and if the answer is "reject", they have already
+leaked what the rejection existed to protect. Each retry needs fresh randomness
+across all nodes, at an expected two to seven attempts. **A one-shot assembly
+becomes an interactive protocol.**
+
+**Three, shortness against Shamir, which is the structural one.** A lattice proof
+is sound because the witness is *short*. Shamir shares are uniform in `Z_q` and
+are not short, and Lagrange coefficients are arbitrary elements of `Z_q`. The
+combination is literally
+
+```python
+z_value = sum(coefficients[p] * partials[p][0] for p in partials) % order
+```
+
+--- short things multiplied by large things and reduced. **Shortness does not
+survive it.** This is not a parameter that can be tuned; it is a mismatch
+between how Shamir reconstructs and what lattice soundness requires.
+
+**Ways out, and their price.** *Replicated secret sharing* keeps shortness,
+because reconstruction is a plain sum with coefficients in `{0,1}` --- at seven
+nodes and `T=2` that is `C(7,2) = 21` shares in total with `C(6,2) = 15` held by
+each party, so fifteen times the per-party storage and the multiplication cost
+that follows it, and it does not scale past small `n`. *Sharing schemes with
+small reconstruction coefficients* exist and trade against threshold
+flexibility. *Threshold lattice signatures* are an active research area whose
+known constructions are heavier than the plain scheme and need more rounds.
+
+**So most of the stack goes post-quantum for a size penalty** --- 14.7x on the
+maker update path, measured, and under three megabytes a second at rates a real
+market maker uses --- **and the quote proof needs a construction this repository
+does not have.** That is research rather than integration, and it is the same
+research the matched field would need.
+
+### 0.6.9 What a quantum network would change, which is one thing
+
+**It closes the one place where this system's confidentiality is still
+computational.** The MPC is information-theoretically secure --- there is no
+assumption to break --- but the traffic between nodes runs over TLS. An
+eavesdropper who records every link today and breaks TLS later holds every
+share, and reconstructs. The computation is unconditional and **the pipe
+carrying it is not**.
+
+The deployment shape happens to be the one QKD can actually serve: seven fixed,
+long-lived, known endpoints rather than arbitrary correspondents --- and section
+0 already says to put them in one metropolitan area for latency, which is the
+range at which QKD works.
+
+**What it cannot do is one-time-pad the traffic.** Against measured volumes:
+
+| | traffic a quote | key rate for a one-time pad |
+|---|---:|---:|
+| default field, 0.4 quotes/s | 19.4 MB | **62 Mbps** |
+| default field, 3 quotes/s | 19.4 MB | 465 Mbps |
+| matched field, 0.4 quotes/s | 277.3 MB | 887 Mbps |
+
+Metro-scale QKD produces roughly 0.1 to 10 Mbps (literature, not measured here),
+so even the cheapest row is one to two orders of magnitude short. What a
+deployment would actually do is rekey a symmetric cipher often --- **and
+symmetric ciphers are already quantum-safe**, since Grover only halves the
+effective key strength and AES-256 absorbs that. **So the real gain is narrower
+than it sounds: not having to trust the key-exchange assumption.** Against
+store-now-decrypt-later that is still a genuine defence.
+
+**Where it does not help, and not for practical reasons.** Unconditionally
+secure bit commitment is **impossible even with quantum mechanics** (Mayers;
+Lo--Chau, 1997). Quantum does not rescue the commitments, so the lattice work
+above is not avoidable by building a quantum network instead.
+
+The reason generalises to the rest: **a proof has to convince someone who was
+not on the link** --- an auditor, a supervisor, a counterparty checking years
+later. QKD secures a channel between two parties who are both present. Quantum
+digital signature schemes exist but need quantum memory or repeated
+distribution, and their transferability is limited, so they do not give
+"anyone can verify this afterwards" either. Signatures still need ML-DSA or its
+kind.
+
+| | does a quantum network change it |
+|---|---|
+| the MPC layer's security | no --- already unconditional, nothing to improve |
+| **confidentiality of the inter-node traffic** | **yes --- this is the one** |
+| commitments | no, and by a no-go theorem rather than by engineering |
+| the quote proof | no --- it has to convince someone who was not there |
+| signatures | no --- they have to be transferable and checkable later |
+
+Two further ideas that sound closer than they are. *Quantum secret sharing*
+would distribute shares over quantum channels with eavesdropping detection, but
+the shares here are classical values, so the benefit collapses back into the
+row above. *Anonymous transmission* through entanglement would hide which
+participant sent a request --- the transport layer's job, approximated today by
+batching and shuffling on a fixed schedule --- and is theoretically stronger and
+practically remote.
+
+**The line worth keeping: a quantum network makes the pipe unconditional, not
+the proof.** And the proof side has an impossibility result sitting on it, so
+the work in 0.6.8 stays on the list either way.
+
 ## 1. Three deployment profiles
 
 The measurements narrow the realistic choices to three.

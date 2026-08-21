@@ -1,0 +1,236 @@
+{
+  "host": "host-a for the round counts, host-c for the sizes",
+  "question": "Three: would a non-elliptic-curve scheme make the matched field cheaper, what throughput does the matched field leave cross-region, and what does post-quantum cost.",
+  "non_elliptic_curve": {
+    "answer": "no, and the repository already measured why",
+    "reasoning": "The matched field's cost is set by the field *size*, and 128-bit security forces a scalar field of about 256 bits for any discrete-log group --- elliptic curve or multiplicative. So no discrete-log scheme shrinks the MPC field. What the group choice does change is the speed of the proofs themselves, and there the curve wins by a lot.",
+    "measured": {
+      "artifact": "zk_bench.json",
+      "host": "host-c",
+      "proof": "market_maker_policy_audit, 7 fields, 7 parties",
+      "ed25519_prove_ms": 14.4,
+      "ed25519_verify_ms": 15.5,
+      "modp_multiexp_prove_ms": 4865.6,
+      "modp_multiexp_verify_ms": 7358.6,
+      "prove_ratio": 338,
+      "verify_ratio": 475
+    },
+    "the_one_direction_that_could": "Lattice commitments. Their security comes from dimension rather than modulus size, so a homomorphic commitment can live over a 32- or 64-bit modulus and the MPC field could shrink with it. What stops it is not the size but the shape: lattice sigma protocols need rejection sampling, so the response is not a clean linear function of the witness, and threshold_sigma's whole method --- each node computes its own piece of the response and they Lagrange-combine --- does not survive that."
+  },
+  "cross_region_throughput": {
+    "method": "Round counts do not depend on machine load, and a wide-area quote is round-trip bound, so the throughput is computed from measured rounds times the round trip rather than from a wall clock taken on a machine at load 60.",
+    "per_quote_rounds_128": 3.48,
+    "per_quote_rounds_matched": 7.02,
+    "rtt_seconds": 0.24,
+    "rows": [
+      {
+        "field": "default_field",
+        "batch": 1,
+        "rounds": 69,
+        "round_trip_seconds": 16.6,
+        "seconds_per_quote": 16.56,
+        "quotes_per_second": 0.06,
+        "quote_age_seconds": 17
+      },
+      {
+        "field": "matched_field",
+        "batch": 1,
+        "rounds": 129,
+        "round_trip_seconds": 31.0,
+        "seconds_per_quote": 30.96,
+        "quotes_per_second": 0.032,
+        "quote_age_seconds": 31
+      },
+      {
+        "field": "default_field",
+        "batch": 8,
+        "rounds": 93,
+        "round_trip_seconds": 22.4,
+        "seconds_per_quote": 2.8,
+        "quotes_per_second": 0.357,
+        "quote_age_seconds": 22
+      },
+      {
+        "field": "matched_field",
+        "batch": 8,
+        "rounds": 178,
+        "round_trip_seconds": 42.8,
+        "seconds_per_quote": 5.34,
+        "quotes_per_second": 0.187,
+        "quote_age_seconds": 43
+      },
+      {
+        "field": "default_field",
+        "batch": 32,
+        "rounds": 177,
+        "round_trip_seconds": 42.5,
+        "seconds_per_quote": 1.33,
+        "quotes_per_second": 0.753,
+        "quote_age_seconds": 42
+      },
+      {
+        "field": "matched_field",
+        "batch": 32,
+        "rounds": 347,
+        "round_trip_seconds": 83.2,
+        "seconds_per_quote": 2.6,
+        "quotes_per_second": 0.385,
+        "quote_age_seconds": 83
+      },
+      {
+        "field": "default_field",
+        "batch": 128,
+        "rounds": 511,
+        "round_trip_seconds": 122.7,
+        "seconds_per_quote": 0.96,
+        "quotes_per_second": 1.043,
+        "quote_age_seconds": 123
+      },
+      {
+        "field": "matched_field",
+        "batch": 128,
+        "rounds": 1021,
+        "round_trip_seconds": 245.0,
+        "seconds_per_quote": 1.91,
+        "quotes_per_second": 0.522,
+        "quote_age_seconds": 245
+      }
+    ],
+    "finding": "The matched field roughly halves cross-region throughput: 0.38 quotes a second at a batch of 32 against 0.75, and the ceiling is about 0.52 because rounds grow with the batch rather than being amortised away. Twenty-three quotes a minute is comfortable for cross-border request-for-quote in instruments that trade by request in the first place. The limit is not throughput but age: a batch of 32 leaves a quote up to 83 seconds old and a batch of 128 up to 245, against staleness.json where 96 seconds is 1.34 to 1.75 times the within-block floor and 300 seconds is 1.63 to 4.00. Batches of 8 to 32 are where the two constraints meet."
+  },
+  "post_quantum": {
+    "what_is_already_post_quantum": "The confidential computation itself. Shamir secret sharing with an honest majority is information-theoretically secure --- there is no assumption for a quantum computer to break, so the MPC layer needs nothing.",
+    "the_favourable_half": "Pedersen commitments are *perfectly* hiding and only computationally binding. A quantum adversary can open a commitment to a value it does not hold; it can never learn the value. So what quantum takes away is the ability to prove, never the ability to hide.",
+    "what_breaks": [
+      "Ed25519 signatures on shares and slot receipts",
+      "Bulletproofs range proofs",
+      "the sigma protocols and the quote proof",
+      "Groth-Kohlweiss one-of-many",
+      "adaptor signatures in the cross-ledger settlement"
+    ],
+    "signature_sizes_measured": {
+      "share_body_bytes": 108,
+      "signature_bytes": {
+        "ed25519": 64,
+        "ml_dsa_44": 2420,
+        "ml_dsa_65": 3309,
+        "slh_dsa_128s": 7856
+      }
+    },
+    "maker_update_path": {
+      "ed25519": {
+        "full_policy_bytes": 10836,
+        "view_only_bytes": 1204,
+        "vs_ed25519": 1.0,
+        "MB_per_second_at_measured_rates": 13.5,
+        "MB_per_second_at_market_rates_10_per_second": 0.19
+      },
+      "ml_dsa_44": {
+        "full_policy_bytes": 159264,
+        "view_only_bytes": 17696,
+        "vs_ed25519": 14.7,
+        "MB_per_second_at_measured_rates": 198.8,
+        "MB_per_second_at_market_rates_10_per_second": 2.83
+      },
+      "ml_dsa_65": {
+        "full_policy_bytes": 215271,
+        "view_only_bytes": 23919,
+        "vs_ed25519": 19.9,
+        "MB_per_second_at_measured_rates": 268.7,
+        "MB_per_second_at_market_rates_10_per_second": 3.83
+      },
+      "slh_dsa_128s": {
+        "full_policy_bytes": 501732,
+        "view_only_bytes": 55748,
+        "vs_ed25519": 46.3,
+        "MB_per_second_at_measured_rates": 626.2,
+        "MB_per_second_at_market_rates_10_per_second": 8.92
+      }
+    },
+    "the_cost_is_size_not_speed": "ML-DSA signs and verifies at speeds comparable to Ed25519 in optimised implementations. What it costs here is bytes, and the maker update path is where they land.",
+    "no_pq_implementation_was_benchmarked": "dilithium-py gives the standard sizes, which is what the byte counts here use, but it is pure Python and its timings would not represent an optimised implementation. No timing is claimed.",
+    "and_this_meets_the_first_question": "Post-quantum homomorphic commitments are lattice commitments, which is the same direction that could shrink the matched field --- and the same rejection sampling blocks both. The two questions have one answer.",
+    "scope": {
+      "single_prover": {
+        "proofs": [
+          "policy_audit",
+          "state_audit",
+          "range proofs",
+          "input_check"
+        ],
+        "cost": "size only",
+        "note": "policy_audit.py and state_audit.py do not import threshold_sigma --- a maker proving about its own policy needs no help"
+      },
+      "threshold_assembled": {
+        "proofs": [
+          "quote_proof",
+          "zkpi"
+        ],
+        "cost": "structural",
+        "note": "and this is the system's headline claim"
+      },
+      "three_obstacles": [
+        {
+          "rank": 1,
+          "name": "size",
+          "detail": "4,960 bytes a step measured for a sigma proof here; lattice equivalents are kilobytes to tens of kilobytes, from the literature. Bandwidth, and the design does not change."
+        },
+        {
+          "rank": 2,
+          "name": "rejection sampling",
+          "detail": "the abort test is on the combined response rather than on any share, so the nodes would have to reconstruct it to decide, and a rejection then comes after the leak it exists to prevent. Two to seven expected retries, each needing fresh randomness across all nodes: a one-shot assembly becomes an interactive protocol."
+        },
+        {
+          "rank": 3,
+          "name": "shortness against Shamir",
+          "detail": "lattice soundness needs a short witness; Shamir shares are uniform in Z_q and Lagrange coefficients are arbitrary elements of it, and combine_responses multiplies the two and reduces. Shortness does not survive. Not a tunable parameter --- a mismatch between how Shamir reconstructs and what lattice soundness requires."
+        }
+      ],
+      "ways_out": {
+        "replicated_secret_sharing": "reconstruction is a plain sum with {0,1} coefficients so shortness survives; at n=7 T=2 that is C(7,2)=21 shares with C(6,2)=15 per party, so fifteen times the per-party storage, and it does not scale past small n",
+        "small_coefficient_sharing": "exists, trades against threshold flexibility",
+        "threshold_lattice_signatures": "active research; known constructions are heavier than the plain scheme and need more rounds"
+      }
+    }
+  },
+  "quantum_network": {
+    "question": "Does QKD or a quantum network change any of this?",
+    "the_one_place_it_helps": "The MPC is information-theoretically secure but the traffic between the nodes runs over TLS, so an eavesdropper who records every link today and breaks TLS later holds every share. The computation is unconditional and the pipe carrying it is not. Seven fixed long-lived endpoints in one metropolitan area --- which section 0 already recommends for latency --- is also the shape and range QKD can serve.",
+    "but_not_as_a_one_time_pad": {
+      "note": "Traffic figures are measured; the QKD key rate is a literature range for metro distances and is not measured here.",
+      "qkd_metro_key_rate_mbps": [
+        0.1,
+        10
+      ],
+      "rows": [
+        {
+          "field": "default",
+          "quotes_per_second": 0.4,
+          "mb_per_quote": 19.37,
+          "otp_key_rate_mbps": 62.0
+        },
+        {
+          "field": "default",
+          "quotes_per_second": 3.0,
+          "mb_per_quote": 19.37,
+          "otp_key_rate_mbps": 464.9
+        },
+        {
+          "field": "matched",
+          "quotes_per_second": 0.4,
+          "mb_per_quote": 277.26,
+          "otp_key_rate_mbps": 887.2
+        }
+      ],
+      "conclusion": "One to two orders of magnitude short even on the cheapest row. A deployment would rekey a symmetric cipher instead, and symmetric ciphers are already quantum-safe --- Grover halves the effective key strength and AES-256 absorbs it. So the real gain is narrower than it sounds: not having to trust the key-exchange assumption. Against store-now-decrypt-later that is still a genuine defence."
+    },
+    "where_it_cannot_help": {
+      "commitments": "Unconditionally secure bit commitment is impossible even with quantum mechanics (Mayers; Lo-Chau, 1997). This is a no-go theorem rather than an engineering limit, so the lattice work is not avoidable by building a quantum network instead.",
+      "the_quote_proof": "A proof has to convince someone who was not on the link --- an auditor, a supervisor, a counterparty checking years later. QKD secures a channel between two parties who are both present.",
+      "signatures": "Quantum digital signature schemes exist but need quantum memory or repeated distribution and their transferability is limited, so they do not give 'anyone can verify this afterwards'. ML-DSA or its kind is still needed.",
+      "quantum_secret_sharing": "The shares here are classical values, so the benefit collapses into the channel row above.",
+      "anonymous_transmission": "Would hide which participant sent a request --- the transport layer's job, approximated today by batching and shuffling on a fixed schedule. Theoretically stronger, practically remote."
+    },
+    "the_line": "A quantum network makes the pipe unconditional, not the proof. And the proof side has an impossibility result on it, so the lattice work stays on the list either way."
+  }
+}
