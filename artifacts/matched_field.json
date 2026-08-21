@@ -1,333 +1,63 @@
 {
   "host": "host-a",
   "question": "what it costs to run the MPC over the same field the commitments use",
-  "why": "A value committed as a Pedersen commitment on ed25519 cannot be checked inside an MPC that works over a different prime, so today a node that inputs something other than what it was dealt is detected and attributed afterwards rather than prevented. Matching the MPC field to the curve's scalar order turns that binding into a distributed exponentiation: the nodes publish g^(share) and Lagrange-combine to g^v without opening v, and g^v is checked against the commitment. The question is the price.",
-  "prediction": {
-    "rounds": "unchanged",
-    "bytes": "about 2x, field elements 16 B to 32 B",
-    "wall_15ms": "4.8 to 6.5 s"
-  },
-  "config": {
-    "n_mm": 16,
-    "n_parties": 7,
-    "bit_length": 31,
-    "n_assets": 4,
-    "repeats": 3,
-    "protocol": "malicious-shamir-party.x",
-    "default_field": "MP-SPDZ -F 128",
-    "matched_field": "-P 2^252 + 27742317777372353535851937790883648493 (the ed25519 / ristretto255 group order)"
+  "superseded_measurement": {
+    "what_was_reported": {
+      "rounds_ratio": 2.02,
+      "traffic_ratio": 14.31,
+      "wall_ratio_15ms": 2.06
+    },
+    "why_it_was_wrong": "The circuit was compiled with `-P <prime>`. MP-SPDZ prints, in the compile output, `WARNING: --prime/-P activates code that usually isn't the most efficient variant. Consider using --field/-F and set the prime only during the actual computation.` That warning was in the output of every run and was not read. Compiling with `-F <bits>` and passing the prime to the virtual machine at run time is the supported path, and it removes the whole penalty.",
+    "kept_because": "a measurement that was published to three repositories and a slide deck, and was wrong by seven times on the figure everything else was reasoned from"
   },
   "arms": {
     "default_15ms": {
       "rounds": 64,
-      "party0_mb": 3.32798,
       "global_mb": 19.3694,
-      "wall_median_s": 3.626332306303084,
-      "compile_s": 0.2574537768959999,
-      "verified": true,
-      "prime": null
+      "wall_median_s": 3.6207809997722507,
+      "verified": true
     },
-    "ell_15ms": {
-      "rounds": 129,
-      "party0_mb": 44.3894,
-      "global_mb": 277.261,
-      "wall_median_s": 7.485718729905784,
-      "compile_s": 1.5530576570890844,
-      "verified": true,
-      "prime": "7237005577332262213973186563042994240857116359379907606001950938285454250989"
-    },
-    "default_0ms": {
+    "matched_15ms": {
       "rounds": 64,
-      "party0_mb": 3.32798,
-      "global_mb": 19.3694,
-      "wall_median_s": 0.1672539720311761,
-      "compile_s": 0.2472535320557654,
-      "verified": true,
-      "prime": null
+      "global_mb": 38.733,
+      "wall_median_s": 3.876662790309638,
+      "verified": true
     },
-    "ell_0ms": {
-      "rounds": 129,
-      "party0_mb": 44.3894,
-      "global_mb": 277.261,
-      "wall_median_s": 0.41877795988693833,
-      "compile_s": 1.5572943752631545,
-      "verified": true,
-      "prime": "7237005577332262213973186563042994240857116359379907606001950938285454250989"
+    "matched_15ms_with_check": {
+      "rounds": 65,
+      "global_mb": 38.7456,
+      "wall_median_s": 3.921796126756817,
+      "verified": true
+    },
+    "default_120ms": {
+      "rounds": 64,
+      "global_mb": 19.3694,
+      "wall_median_s": 27.60266625089571,
+      "verified": true
+    },
+    "matched_120ms": {
+      "rounds": 64,
+      "global_mb": 38.733,
+      "wall_median_s": 29.178656893782318,
+      "verified": true
+    },
+    "default_120ms_batch32": {
+      "rounds": 259,
+      "global_mb": 637.131,
+      "wall_median_s": 105.96211402211338,
+      "verified": true
     }
   },
   "result": {
-    "rounds_ratio": 2.015625,
-    "global_bytes_ratio": 14.314382479581198,
-    "wall_ratio_15ms": 2.0642671706877316,
-    "wall_ratio_0ms": 2.503844631019455,
-    "note": "Rounds were predicted unchanged and doubled. Bytes were predicted at about 2x and came in at 13x, so the prediction was roughly seven times too cheap. Wall clock is 2.06x at 15 ms and 2.50x at 0 ms --- the byte increase does not show up as time in proportion, because what the matched field costs is round count and arithmetic width rather than transfer. Both arms verified against the cleartext answer.",
-    "caveat": "the seven parties share one machine and the delay is a loopback proxy, so bandwidth is not modelled. 277 MB of global traffic per quote is about 40 MB per node, which a gigabit link absorbs in a third of a second and a hundred-megabit link does not. On a real wide area link the 15 ms figure is a lower bound."
-  },
-  "improvements": {
-    "question": "277 MB a quote is not deployable. What brings it down?",
-    "baseline_default_field": {
-      "rounds": 64,
-      "global_mb": 19.3694,
-      "wall_median_s": 3.626
-    },
-    "matched_field_plain": {
-      "rounds": 129,
-      "party0_mb": 44.3894,
-      "global_mb": 277.261,
-      "wall_median_s": 7.485718729905784,
-      "compile_s": 1.5530576570890844,
-      "verified": true,
-      "prime": "7237005577332262213973186563042994240857116359379907606001950938285454250989"
-    },
-    "tried": {
-      "edabit_default": {
-        "rounds": 1582,
-        "global_mb": 2920.08,
-        "wall_median_s": 63.62476493604481,
-        "verified": true,
-        "edabit": true,
-        "audit_gates": false,
-        "public_maker_assets": false
-      },
-      "edabit_matched": {
-        "rounds": 2042,
-        "global_mb": 6256.89,
-        "wall_median_s": 111.75580736994743,
-        "verified": true,
-        "edabit": true,
-        "audit_gates": false,
-        "public_maker_assets": false
-      },
-      "levers_none": {
-        "rounds": 129,
-        "global_mb": 277.261,
-        "wall_median_s": 7.38847135566175,
-        "verified": true,
-        "edabit": false,
-        "audit_gates": false,
-        "public_maker_assets": false
-      },
-      "levers_audit_gates": {
-        "rounds": 122,
-        "global_mb": 216.879,
-        "wall_median_s": 6.58460293803364,
-        "verified": true,
-        "edabit": false,
-        "audit_gates": true,
-        "public_maker_assets": false
-      },
-      "levers_public_maker_assets": {
-        "rounds": 123,
-        "global_mb": 197.694,
-        "wall_median_s": 6.533763846382499,
-        "verified": true,
-        "edabit": false,
-        "audit_gates": false,
-        "public_maker_assets": true
-      },
-      "levers_both": {
-        "rounds": 107,
-        "global_mb": 137.3,
-        "wall_median_s": 5.632815869990736,
-        "verified": true,
-        "edabit": false,
-        "audit_gates": true,
-        "public_maker_assets": true
-      }
-    },
-    "findings": {
-      "edabits": "Predicted a large reduction, because edaBits make comparison cost scale with the value width rather than the field width. Measured the opposite by two orders of magnitude: 2,920 MB on the default field and 6,257 MB on the matched one. edaBits are a preprocessing technique and this harness measures a single phase, so their generation cost lands in the run with no offline phase to hide in. That is the item DEPLOYMENT.md already listed as the largest unmeasured unknown; this measures the wrong phase for it rather than showing edaBits are bad.",
-      "existing_levers": "`audit_gates` moves the expiry and active checks to the registration-time policy audit instead of paying for the same fact twice. `public_maker_assets` makes each maker's served market public business information, so the asset gate becomes a public index into a secret one-hot vector and costs no communication. Together: 277.3 MB to 137.3 MB, rounds 129 to 107, wall 7.39 s to 5.63 s. Against the default field that is 14.3x to 7.1x of traffic and 2.04x to 1.55x of clock. The second lever is not free --- it publishes which markets each maker serves.",
-      "predicted_150_to_190_mb": "measured 137.3 MB, slightly better than predicted"
-    },
-    "proposal_not_implemented": {
-      "name": "random linear combination input check, in the existing field",
-      "observation": "Binding the *dealt* shares to a commitment never needed a matched field: the shares sum over the integers, so g^v = prod g^(v_i) in any group. What needs matching is binding what MP-SPDZ ingested. That can be done another way.",
-      "mechanism": "The dealer already publishes a commitment per input. Derive public challenge coefficients by Fiat-Shamir over those commitments once the inputs are fixed, have the circuit compute s = sum c_j v_j + r for a committed mask r, and open s. Check g^s against the homomorphic combination of the commitments. A node that substitutes an input shifts s by sum c_j e_j, which is nonzero except with probability about 2^-40 over the challenge.",
-      "why_the_fields_do_not_clash": "with 166 inputs of 31 bits and 40-bit challenges the sum is at most 79 bits, which reduces in neither the 127-bit MPC prime nor the 252-bit curve scalar field, so it is the same integer on both sides and the check is exact",
-      "why_the_mask": "without it each quote opens one linear equation in the policy, and enough quotes with fresh challenges solve for it. The masking machinery already exists --- the answer is already opened under a trader-supplied mask.",
-      "predicted_cost": "public coefficient times secret is local, so no communication; one extra opening is one round. Rounds +1, traffic plus one field element --- that is, the default field's 19.4 MB essentially unchanged.",
-      "status": "reasoned and checked arithmetically, not implemented and not measured"
-    }
-  },
-  "narrower_field_and_the_check": {
-    "question": "The input check needs about 165 bits and the sigma assembly needs the group order at 253. Is the narrower field worth the loss?",
-    "prediction": {
-      "traffic_vs_default": "4x to 9x",
-      "rounds": "96 to 129",
-      "wall_vs_default": "1.4x to 1.9x",
-      "input_check_adds": "1 to 3 rounds"
-    },
-    "prime_177": "2^176 + 5493 (the next prime above 2^176), 177 bits",
-    "arms": {
-      "default_128": {
-        "rounds": 64,
-        "global_mb": 19.3694,
-        "party0_mb": 3.32798,
-        "wall_median_s": 3.634557381272316,
-        "verified": true,
-        "input_check": false,
-        "field_bits": 128
-      },
-      "prime_177": {
-        "rounds": 124,
-        "global_mb": 150.843,
-        "party0_mb": 24.1283,
-        "wall_median_s": 6.227958359289914,
-        "verified": true,
-        "input_check": false,
-        "field_bits": 177
-      },
-      "prime_177_with_check": {
-        "rounds": 125,
-        "global_mb": 150.844,
-        "party0_mb": 24.1285,
-        "wall_median_s": 6.377314500976354,
-        "verified": true,
-        "input_check": true,
-        "field_bits": 177
-      },
-      "prime_253": {
-        "rounds": 129,
-        "global_mb": 277.261,
-        "party0_mb": 44.3894,
-        "wall_median_s": 7.782518350984901,
-        "verified": true,
-        "input_check": false,
-        "field_bits": 252
-      }
-    },
-    "result": {
-      "input_check_costs": {
-        "rounds": 1,
-        "global_mb": 0.001,
-        "wall_s": 0.1494
-      },
-      "narrow_vs_group_order": {
-        "traffic": 0.544,
-        "wall": 0.8002,
-        "rounds": 0.9612
-      },
-      "note": "All four predictions landed this time, after four that did not. The input check costs exactly one round and no measurable traffic, which is what section 0.6.2 predicted before the mask was counted and the width was found. 177 bits against 253 saves 46% of the traffic and 20% of the clock at almost the same round count.",
-      "recommendation": "253. The narrower field buys 46% of traffic --- 151 MB against 277, or about 22 MB a node against 40, which a gigabit link absorbs either way --- and gives up threshold_sigma assembling, which is what makes the quote proof publicly verifiable. That proof is the system's headline claim. Trading it for traffic that the link already absorbs is the wrong way round. At 253 both bindings are available and the check still costs one round."
-    }
-  },
-  "the_check_in_the_default_field": {
-    "question": "Does the check run at 128 bits after all?",
-    "answer": "Yes. The earlier conclusion that it does not fit was about one parameter choice, not about the field. Forty-bit coefficients need 165 bits; six-bit coefficients repeated seven times need 126, and seven independent combinations open in the same round because none of them waits on another.",
-    "parameters": {
-      "challenge_bits": 6,
-      "repeats": 7,
-      "statistical_bits": 35,
-      "soundness_bits": 42,
-      "mask_bits": 81,
-      "field_bits_needed": 126
-    },
-    "arms": {
-      "default_128": {
-        "rounds": 64,
-        "global_mb": 19.3694,
-        "wall_median_s": 3.5833001118153334,
-        "verified": true,
-        "input_check": false
-      },
-      "default_128_with_check": {
-        "rounds": 65,
-        "global_mb": 19.3756,
-        "wall_median_s": 3.630761643871665,
-        "verified": true,
-        "input_check": true
-      }
-    },
-    "cost": {
+    "rounds_ratio": 1.0,
+    "traffic_ratio": 2.0,
+    "wall_ratio_15ms": 1.071,
+    "wall_ratio_120ms": 1.057,
+    "input_check_on_matched_field": {
       "rounds": 1,
-      "global_mb": 0.0062,
-      "wall_s": 0.0475
+      "global_mb": 0.0126
     },
-    "what_is_given_up": "The hiding of the opening, and only that. Repetition buys soundness back and dilutes the gap, so the curve peaks at about 2^-34 near two to four coefficient bits and the stack's usual 2^-40 is out of reach at 127 bits at any point on it. At the shipped six-bit-by-seven setting it is 2^-32.",
-    "tradeoff_curve": [
-      {
-        "challenge_bits": 2,
-        "statistical_bits": 39,
-        "repeats": 26,
-        "soundness_bits": 41.2,
-        "hiding_bits": 34.3,
-        "openings": 26,
-        "masks_dealt": 26
-      },
-      {
-        "challenge_bits": 3,
-        "statistical_bits": 38,
-        "repeats": 15,
-        "soundness_bits": 42.1,
-        "hiding_bits": 34.1,
-        "openings": 15,
-        "masks_dealt": 15
-      },
-      {
-        "challenge_bits": 4,
-        "statistical_bits": 37,
-        "repeats": 11,
-        "soundness_bits": 43.0,
-        "hiding_bits": 33.5,
-        "openings": 11,
-        "masks_dealt": 11
-      },
-      {
-        "challenge_bits": 6,
-        "statistical_bits": 35,
-        "repeats": 7,
-        "soundness_bits": 41.8,
-        "hiding_bits": 32.2,
-        "openings": 7,
-        "masks_dealt": 7
-      },
-      {
-        "challenge_bits": 8,
-        "statistical_bits": 33,
-        "repeats": 6,
-        "soundness_bits": 48.0,
-        "hiding_bits": 30.4,
-        "openings": 6,
-        "masks_dealt": 6
-      },
-      {
-        "challenge_bits": 10,
-        "statistical_bits": 31,
-        "repeats": 5,
-        "soundness_bits": 50.0,
-        "hiding_bits": 28.7,
-        "openings": 5,
-        "masks_dealt": 5
-      },
-      {
-        "challenge_bits": 14,
-        "statistical_bits": 27,
-        "repeats": 3,
-        "soundness_bits": 42.0,
-        "hiding_bits": 25.4,
-        "openings": 3,
-        "masks_dealt": 3
-      },
-      {
-        "challenge_bits": 20,
-        "statistical_bits": 21,
-        "repeats": 3,
-        "soundness_bits": 60.0,
-        "hiding_bits": 19.4,
-        "openings": 3,
-        "masks_dealt": 3
-      },
-      {
-        "challenge_bits": 30,
-        "statistical_bits": 11,
-        "repeats": 2,
-        "soundness_bits": 60.0,
-        "hiding_bits": 10.0,
-        "openings": 2,
-        "masks_dealt": 2
-      }
-    ],
-    "caveat": "host-a carried a load average near 64 during this run, so the wall clock is the soft number; the 128-bit baseline came out at 3.583 s against 3.626 and 3.635 in quieter runs, so the distortion is small and the round and byte counts do not depend on load at all."
+    "note": "Rounds unchanged. Traffic exactly 2.00x, which is the element width going from 16 bytes to 32 and nothing else. Wall clock 1.07x at 15 ms and 1.06x at 120 ms --- cheaper cross-region, because the round count does not move and the round trip is what dominates there. Every arm verified against the cleartext answer.",
+    "consequence": "Matching the field is affordable, so threshold_sigma assembles and the quote proof is publicly verifiable for six to eight per cent. The input check is no longer the cheap alternative to that --- it is a fast pre-check that still costs one round on top, and catches a substituted input immediately rather than when the proof fails."
   }
 }

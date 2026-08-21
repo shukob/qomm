@@ -85,9 +85,9 @@
       "sha256": "a7eacba2920ff2b16184df4ff60645a866b97df2aef005a99bf10c9c3cf99c4a"
     },
     "matched_field.json": {
-      "bytes": 14103,
+      "bytes": 2711,
       "host": "host-a",
-      "sha256": "d0a4293f3542d0fd9d023c4ec6d858c557c2e302bcfb82723029dfc3e45453a6"
+      "sha256": "5ad122b792f40df05e3b208335c2d1c53a21b2982d8e76076fba1f0afcd4ee17"
     },
     "mpc_resident.json": {
       "bytes": 3242,

@@ -212,14 +212,14 @@ Two things bear on the placement decision, and the rest is in `BINDING.md`.
 - **It is closable in the default field for one round and six kilobytes**
   (`input_check.json`): 65 rounds against 64, 19.38 MB against 19.37, 47 ms.
   Nothing about the node placement changes.
-- **Making the quote proof publicly verifiable is the expensive one.** That
-  needs the MPC to run over the commitment group's order, at **2.14x the wall
-  clock and 14.3x the traffic** (`matched_field.json`). **Cross-region it does
-  not batch**: measured at 120 ms one way, its round penalty grows from 2.02x at
-  one request to 5.07x at thirty-two, so a batch of 32 is 1,314 rounds, 1,276 MB
-  a node and a quote fifteen minutes old. Cross-region the matched field is
-  usable only un-batched, at 57 s a quote; **what runs there is the default field
-  with the check**, at 0.300 quotes a second and a 107-second quote.
+- **Making the quote proof publicly verifiable costs six to eight per cent.**
+  That needs the MPC to run over the commitment group's order, and measured with
+  the field width compiled in and the prime given at run time, it is **1.00x the
+  rounds, 2.00x the traffic and 1.07x the wall clock** --- 1.06x cross-region,
+  where the unchanged round count is what matters (`matched_field.json`).
+  **Nothing about node placement changes.** An earlier version of this section
+  reported 2.14x and 14.3x, from compiling the prime in rather than passing it at
+  run time; `BINDING.md` section 2.1 has that story.
 
 `BINDING.md` has the two mechanisms, what each costs, why no other group helps,
 what post-quantum costs, what a quantum network would and would not change, and

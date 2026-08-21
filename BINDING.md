@@ -69,55 +69,65 @@ Run MP-SPDZ over the ed25519 group order and the Lagrange combination becomes
 valid as written. No new cryptography; the existing code starts meaning what it
 says.
 
-Both arms in one session on one machine, both verified (M=16, 31 bits, 4 assets,
-N=7):
+Both arms in one session on one machine, every arm verified (M=16, 31 bits,
+4 assets, N=7):
 
-| | rounds | global traffic | wall @15 ms | wall @0 ms |
+| | rounds | global traffic | wall @15 ms | wall @120 ms |
 |---|---:|---:|---:|---:|
-| MP-SPDZ `-F 128` | 64 | 19.4 MB | 3.626 s | 0.167 s |
-| ed25519 scalar field, 253 bits | **129** | **277.3 MB** | **7.486 s** | **0.419 s** |
-| ratio | **2.02x** | **14.3x** | **2.06x** | **2.50x** |
+| MP-SPDZ default field | 64 | 19.37 MB | 3.621 s | 27.603 s |
+| ed25519 scalar field, 253 bits | **64** | **38.73 MB** | **3.877 s** | **29.179 s** |
+| ratio | **1.00x** | **2.00x** | **1.07x** | **1.06x** |
 
-**The price is round count and arithmetic width, not transfer.** Fourteen times
-the bytes buys only two to two and a half times the clock, and the ratio is
-*worse* at zero delay than at 15 ms --- the opposite of a bandwidth-bound cost.
+**Rounds do not move. Traffic is exactly 2.00x, which is the element width going
+from 16 bytes to 32 and nothing else. Wall clock is 7% at 15 ms and 6% at
+120 ms** --- cheaper cross-region, because the round count is unchanged and the
+round trip is what dominates there.
 
-Two caveats before treating 2x as the number. The seven parties share one
-machine and the delay proxy models latency but **not bandwidth**, so 277 MB a
-quote --- about 40 MB a node, a third of a second on a gigabit link and three
-seconds on a hundred-megabit one --- is a cost the measurement does not show.
-And the 2x is paid on **every gate of every quote**.
+**So matching the field is affordable, and that decides most of this document.**
+`threshold_sigma` assembles, the quote proof is publicly verifiable, and it costs
+six to eight per cent.
 
-### 2.1 What brings 277 MB down, and what does not
+### 2.1 The seven-times error that this section used to report
 
-**edaBits: two orders of magnitude worse.** The obvious first try, since
-comparison cost is meant to scale with the value width rather than the field
-width --- exactly the 31-against-253 mismatch the traffic is made of. Measured:
-**2,920 MB** on the default field and **6,257 MB** on the matched one, at 1,582
-and 2,042 rounds. Not because the technique is bad: edaBits are preprocessing
-and this harness measures one phase, so their generation lands in the run with
-nowhere to hide. **This measures the wrong phase for them**, and the right
-measurement needs an offline stage the bundled tool does not produce.
+The first version of this measurement reported **2.02x rounds and 14.3x
+traffic**, and everything downstream was reasoned from it: which field to take,
+whether the input check was worth building, what the throughput was
+cross-region, whether a different group or a smaller field would help.
 
-**Probabilistic truncation: no effect at all.** `program.use_trunc_pr` left
-rounds and bytes identical to the decimal, so the comparison path it targets is
-not the one this circuit takes.
+**All of it was one wrong flag.** The circuit was compiled with `-P <prime>`.
+MP-SPDZ prints, in the compile output of every such run:
 
-**Two levers already in the circuit halve it.** `audit_gates` stops paying twice
-for the expiry and active facts the registration audit already proves;
-`public_maker_assets` turns the asset gate into a public index into a secret
-one-hot vector, at no communication.
+> `WARNING: --prime/-P activates code that usually isn't the most efficient
+> variant. Consider using --field/-F and set the prime only during the actual
+> computation.`
 
-| matched field, plus | rounds | global | wall @15 ms | vs default field |
-|---|---:|---:|---:|---:|
-| nothing | 129 | 277.3 MB | 7.39 s | 14.3x / 2.04x |
-| `audit_gates` | 122 | 216.9 MB | 6.59 s | 11.2x / 1.82x |
-| `public_maker_assets` | 123 | 197.7 MB | 6.53 s | 10.2x / 1.80x |
-| **both** | **107** | **137.3 MB** | **5.63 s** | **7.1x / 1.55x** |
+That warning was in the output every time and was not read. Compiling with
+`-F <bits>` and giving the prime to the virtual machine at run time is the
+supported path, and it removes the entire penalty.
 
-The second lever is **not free**: it publishes which markets each maker serves.
+**Three things were then measured against a problem that did not exist**, and
+they are worth keeping for what they say about the tool rather than about the
+question:
 
----
+- **edaBits** made it two orders of magnitude worse --- 2,920 MB on the default
+  field, 6,257 MB on the matched one. They are preprocessing, and this harness
+  measures one phase, so their generation lands in the run with nowhere to hide.
+  A real offline stage is still unmeasured.
+- **Probabilistic truncation** changed nothing at all, to the decimal.
+- **`audit_gates` and `public_maker_assets` together** took 277.3 MB to 137.3 MB.
+  Real levers, and they still work --- they are just no longer needed for this.
+
+And the literature was searched for a way around a barrier that was not there.
+**Rabbit** (Makri, Rotaru, Vercauteren, Wagh, FC 2021) removes the statistical
+security requirement that makes comparison cost scale with the field, "allowing
+MPC protocols to be run in a field of arbitrary size" --- and MP-SPDZ already
+implements it, gated on the prime being close to a power of two, which the
+ed25519 order is by a margin of `2^-127`. The fast path was available the whole
+time; the compile flag was not letting it be reached.
+
+**The lesson is not about MP-SPDZ.** A seven-times figure was published to three
+repositories and a slide deck, and used as the premise of four subsequent
+decisions, while the tool printed the reason in plain English on every run.
 
 ## 3. Checking the inputs instead
 
@@ -191,21 +201,25 @@ In the circuit, both arms verified:
 
 | | binds the inputs | quote proof publicly verifiable | cost |
 |---|---|---|---|
-| **default field + check** | **yes** | no | **+1 round, +6 KB** |
-| **group order (253 bits)** | **yes** | **yes** | **2.14x clock, 14.3x traffic** |
-| 177 bits + check | yes | no | 1.75x clock, 7.8x traffic |
+| default field | no | no | --- |
+| default field + check | yes | no | +1 round, +6 KB |
+| **group order (253 bits)** | **yes** | **yes** | **2.00x traffic, 1.07x wall** |
+| group order + check | yes | yes | the above, +1 round |
 
-**177 bits buys nothing the other two do not.** It was the answer to a question
-that turned out to be badly posed --- the check runs in the narrow field, so
-there is no reason to widen partway.
+**Take the group order.** It is six to eight per cent of the wall clock and
+twice the bytes --- 5.5 MB a node a quote against 2.8 --- and it buys the
+publicly verifiable quote proof, which is the system's headline claim.
 
-**Take the default field with the check** unless the publicly verifiable quote
-proof is wanted, and take the group order when it is. The two mechanisms are
-complementary rather than alternatives: the check says the inputs were the
-committed ones and costs a round; the sigma assembly says the whole computation
-was right and can be checked by anyone afterwards.
+**The input check is no longer the cheap alternative to that.** It is still
+worth having and still costs one round on the matched field (measured: 65 rounds
+against 64, +0.013 MB), but as a **fast pre-check**: it catches a substituted
+input at once rather than when a 317 ms proof fails to verify. Defence in depth
+rather than a substitute.
 
----
+The narrow-field version of the check in section 3 remains the answer for a
+deployment that skips the quote proof entirely --- profile A in
+`DEPLOYMENT.md`, where latency is everything and correctness proofs are not
+produced.
 
 ## 5. Would a different group be cheaper? No
 
@@ -369,43 +383,27 @@ theoretically stronger and practically remote.
 
 ## 8. What the matched field leaves cross-region
 
-Measured at 120 ms one way --- Tokyo to Zurich --- with every arm verified. The
-wall clock is an **inflated upper bound**: `host-a` carried a load average near
-60 during the run. Rounds and bytes do not depend on load, and neither does the
-round-trip floor computed from them, so both columns are given and they say the
-same thing. The `Q=1` default-field figure of 26.7 s also matches
-`placement_intercontinental.json`'s 26.1 s, so the instrument agrees with itself.
+**Almost exactly what the default field leaves**, because the round count does
+not move and a wide-area quote is round-trip bound. Measured at 120 ms one way,
+verified:
 
-| | batch | rounds | MB a node | floor quotes/s | measured quotes/s | quote age |
-|---|---:|---:|---:|---:|---:|---:|
-| default field | 1 | 64 | 3 | 0.065 | 0.037 | 27 s |
-| default field | 8 | 103 | 22 | 0.324 | 0.181 | 44 s |
-| **default field** | **32** | **259** | **91** | **0.515** | **0.300** | **107 s** |
-| matched field | 1 | 129 | 40 | 0.032 | 0.017 | 57 s |
-| matched field | 8 | 399 | 323 | 0.084 | 0.033 | 245 s |
-| matched field | 32 | 1314 | **1,276** | 0.101 | **0.036** | **889 s** |
+| | rounds | global | wall | vs default |
+|---|---:|---:|---:|---:|
+| default field, one request | 64 | 19.37 MB | 27.603 s | --- |
+| **group order, one request** | **64** | **38.73 MB** | **29.179 s** | **1.06x** |
+| default field, batch of 32 | 259 | 637.1 MB | 105.96 s | --- |
 
-**The matched field's round penalty grows with the batch.** It is 2.02x at
-`Q=1`, 3.87x at `Q=8` and **5.07x at `Q=32`** --- rounds grow at **6.29 a quote**
-in the default field against **38.23** in the matched one.
+**Six per cent.** The earlier version of this section reported the matched field
+at 0.036 quotes a second against 0.75 for the default --- a twenty-fold gap that
+was the compile flag, not the field.
 
-**So batching pays in the default field and does not in the matched one.**
-Default: `Q=1` to `Q=32` takes 26.7 s a quote down to 3.3 s, eight times better,
-while the age goes 27 s to 107 s, four times worse. Against `staleness.json`,
-where 96 seconds is 1.34 to 1.75 times the within-block floor, that is a good
-trade. Matched: 57.5 s to 27.8 s, twice better, while the age goes 57 s to
-889 s, fifteen times worse. **A quote fifteen minutes old is not a quote.**
-
-And 8,932 MB a job is **1,276 MB a node**, which a gigabit link spends ten
-seconds a job moving.
-
-**Cross-region, the matched field is usable only un-batched** --- 57 s a quote at
-0.017 a second, which the staleness curve still tolerates. Batching it trades
-age for throughput at about seven to one. **What runs cross-region is the default
-field with the input check**: 0.300 quotes a second at a batch of 32 with a
-107-second quote, and the binding costs one round.
-
----
+What survives from that work is the shape of batching, which is a property of
+the circuit rather than of the field: **rounds grow with the batch** --- 64 to
+259 from one request to thirty-two --- so batching trades the quote's age for
+throughput. A batch of 32 is 3.3 s a quote against 27.6 s, eight times better,
+for an age of 106 s against 28 s. Against `staleness.json`, where 96 seconds is
+1.34 to 1.75 times the within-block floor, that is a good trade, and **batches of
+8 to 32 are where throughput and age meet.**
 
 ## 9. Every prediction in this document that missed
 
@@ -414,20 +412,26 @@ predictions that landed is advertising a discipline rather than reporting one.
 
 | predicted | measured | direction |
 |---|---|---|
-| matched field leaves the round count unchanged | **2.02x** --- an arbitrary prime does not get the comparison machinery the default field has | wrong |
-| matched field costs about 2x traffic, from 16-byte elements becoming 32 | **14.3x** --- element width is the small half; comparisons over a general prime need far more shared bits | 7x too cheap |
-| edaBits reduce it, since comparison should scale with value width | **150x worse** --- preprocessing measured in a single-phase harness | wrong phase |
-| probabilistic truncation gives 150 to 250 MB | **no change at all** | wrong |
-| the input check is free: one round and one field element | **true of the opening; the mask was not counted** | incomplete |
-| the check therefore cannot run at 127 bits | **it runs** --- the first split of the budget that failed was taken for the whole budget | wrong |
-| 2^-40 hiding is unreachable at 127 bits; then reachable with repetitions; then unreachable | **unreachable, ceiling about 2^-34** --- said three ways before the curve was tabulated | resolved by measuring |
-| 177-bit field: 4--9x traffic, 96--129 rounds, 1.4--1.9x wall | **7.8x, 124, 1.71x** | all three landed |
+| matched field leaves the round count unchanged | **1.00x** | **landed** --- and was then reported as 2.02x for a week because of the compile flag |
+| matched field costs about 2x traffic, from 16-byte elements becoming 32 | **2.00x** | **landed exactly**, and was likewise reported as 14.3x |
+| edaBits reduce it | 150x worse --- preprocessing measured in a single-phase harness | wrong phase, **and against a problem that did not exist** |
+| probabilistic truncation gives 150 to 250 MB | no change at all | wrong, same |
+| the input check is free: one round and one field element | true of the opening; the mask was not counted | incomplete |
+| the check therefore cannot run at 127 bits | it runs --- the first split of the budget that failed was taken for the whole budget | wrong |
+| 2^-40 hiding is unreachable at 127 bits; then reachable; then unreachable | unreachable, ceiling about 2^-34 | resolved by measuring |
+| 177-bit field: 4--9x traffic, 96--129 rounds, 1.4--1.9x wall | 7.8x, 124, 1.71x | landed, **against the wrong baseline** |
 | the check adds 1 to 3 rounds | **1** | landed |
-| cross-region at a batch of 32: 347 rounds and 0.38 quotes/s, extrapolated from a 15 ms table by assuming the matched field's 2.02x holds at every batch | **1,314 rounds and 0.036 quotes/s** --- the penalty grows with the batch, 2.02x to 3.87x to 5.07x | 10x too generous |
+| cross-region at a batch of 32: 347 rounds, 0.38 quotes/s | 1,314 rounds, 0.036 --- extrapolating a ratio that was itself growing | 10x too generous, **and the ratio was an artifact** |
+| compiling with `-F` instead of `-P` gives 2--6x traffic and 1.0--1.4x rounds | **2.00x and 1.00x** | landed |
 
-Four in a row wrong, then two right, then one more wrong. Every one of them was
-about arithmetic written down in this repository rather than about anything
-inside MP-SPDZ, which is the part worth remembering: **the errors were in the
-counting, not in the tool.** The last one is the sharpest example --- a ratio
-measured at one batch size, assumed to hold at every batch size, and wrong by
-ten times because the thing being extrapolated was itself growing.
+**The two most important predictions in this document were right the first
+time**, and were then buried under a measurement that contradicted them for a
+week. When arithmetic said the cost should be the element width and the
+measurement said fourteen times, the arithmetic was correct and the harness was
+misconfigured --- and the tool was printing the reason on every run.
+
+That is the finding to carry out of here. The other errors were counting
+mistakes, which are cheap to find once someone counts again. **This one was a
+disagreement between theory and measurement that got resolved in favour of the
+measurement without asking why they disagreed**, and it cost four sections and a
+published slide.

@@ -114,7 +114,11 @@ class MPSpdzRun:
         # A custom prime makes the MPC field equal to the commitment scalar field,
         # so the shares the nodes already hold can serve as the witness shares of
         # the sigma proofs. It costs a wider field; that cost is measured.
-        field = ["-P", str(prime)] if prime else ["-F", "128"]
+        # MP-SPDZ warns that compiling with -P "activates code that usually
+        # isn't the most efficient variant" and to use -F with the prime given
+        # only at run time. The first measurement of the matched field used -P
+        # at compile time and paid 14.3x the traffic for it.
+        field = (["-F", str(prime.bit_length())] if prime else ["-F", "128"])
         cmd = [sys.executable, "./compile.py", *field, *(extra or []), self.program]
         t0 = time.perf_counter()
         proc = subprocess.run(cmd, cwd=self.root, capture_output=True, text=True)
@@ -403,6 +407,10 @@ def main() -> int:
     reference = json.loads(ref_path.read_text())
 
     run = MPSpdzRun(root, program, args.n_parties, args.threshold, args.protocol)
+    if args.prime:
+        # the field width is compiled in; the prime itself is a run-time
+        # argument, which is the variant MP-SPDZ says is the efficient one
+        run.extra_args += ["-P", str(args.prime)]
     if args.batch_size:
         run.extra_args += ["-b", str(args.batch_size)]
     if args.file_prep:
