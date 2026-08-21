@@ -88,6 +88,15 @@
       "host": "host-a",
       "sha256": "29efc5f586abfbc35b33335c0faec41b57ed7de06629e71eccc2d6c833364a98"
     },
+    "locate.json": {
+      "bytes": 6010,
+      "host": "host-c (pure arithmetic; no timing claim depends on the machine)",
+      "sha256": "66f1e272ef5a701d18dd79131299de9f3245c14c58acee692b3b78556637fa50"
+    },
+    "locate_prediction.json": {
+      "bytes": 2853,
+      "sha256": "7c6c64f6a519eb91a35075c54f1700c3f8d85d7f3b390d921fd3c29b8f920072"
+    },
     "maker_updates.json": {
       "bytes": 8584,
       "host": "host-a",
@@ -230,5 +239,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "b770b74550fb8714e55f2ea059481d33e194b634"
+  "commit": "aaac0df0ff331d2bed09c1b9313ac661211343df"
 }

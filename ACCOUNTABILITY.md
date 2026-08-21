@@ -214,6 +214,79 @@ decode plus 40% on openings, and robust *computation* is GSZ and is a bigger
 job.** The first is worth doing on its own --- it removes the cheapest griefing
 attack --- and nothing in this repository has measured it.
 
+### Asked directly: is it known who cheated? No --- and the obvious guess is wrong
+
+Four runs on `host-a`, one byte flipped in one party's preprocessing file, `-F`,
+restore between runs (`artifacts/locate.json`):
+
+| corrupted party | what the transcript says |
+|---|---|
+| 3 | `Fatal error at fp2000-0:3 (MULS): inconsistent Shamir secret sharing` |
+| 1 | **identical** --- the `3` is the instruction offset, not the party |
+| 5 | `Fatal error in communication: read_some: stream truncated` |
+| 6 | `Fatal error in communication: read_some: stream truncated` |
+
+**The first two lines settle it**: the same string for two different culprits, so
+the transcript carries no party information. **The last two are worse than
+nothing.** When the bad data belongs to a party the others reach later, they die
+on a dropped connection first --- so the attribution a reader would naturally
+reach for, *whose link went down*, points at whichever process exited first
+rather than at the party whose data was wrong. **An operator debugging this would
+blame the wrong node.**
+
+### And it is decidable, on data the protocol already sends
+
+`qomm_audit/locate.py` is the decode MP-SPDZ does not do, with 26 tests.
+Berlekamp--Welch: solve for `Q` of degree `<= d+e` and monic `E` of degree `e`
+with `Q(x_i) = y_i E(x_i)`, then `P = Q/E` is the true polynomial and every share
+off it belongs to a liar.
+
+| | capacity | 0 wrong | 1 | 2 | 3 |
+|---|---:|---|---|---|---|
+| degree-`t` (ordinary value) | **2** | 300/300 | 300/300 | **300/300** | 0/300 |
+| degree-`2t` (unreduced product) | **1** | 300/300 | **300/300** | 0/300 | 0/300 |
+
+*named exactly, out of 300 random trials each*
+
+**`T = 2` and the capacity is 2. That coincidence is the finding** --- this
+deployment's corruption threshold sits exactly at the decoding capacity of its
+own sharing, so every corruption it is designed to tolerate is also one it could
+name. At three the decoder refuses rather than guessing, which is the only
+correct behaviour: naming somebody beyond capacity would be worse than silence.
+
+Cost, on data already received, no extra rounds:
+
+| | median |
+|---|---:|
+| plain Lagrange from 3 of 7, which is what the engine does | 20.6 us |
+| locate, no errors | 22.9 us |
+| locate, one liar | 88.4 us |
+| locate, two liars | 208.1 us |
+
+**The traffic cost is the real one**: an opening today collects `2t+1 = 5` of
+seven, and `RS[5,3]` names one liar rather than two. Naming `T` needs all `n`
+--- **40% more per opening**.
+
+### The half of the answer that is not free
+
+**This names the party that sent a malformed share. It cannot name the party
+that lied about its input**, and that is the more likely attack.
+
+`secret_input()` sums one additive share from each party, so a party that writes
+a different number into its own input file is offering a **valid sharing of a
+different value**. Nothing is inconsistent. There is no codeword to decode,
+because the codeword is fine --- it encodes the wrong secret.
+
+That is the gap `BINDING.md` is about, and the input check detects it without
+naming anybody: *"an input the circuit used was not the one that was
+committed"*. **Turning that into a verdict means opening one combination per
+party rather than one over all inputs** --- `n` openings and `n` masks instead of
+one, and the masks are what forced the 164-bit field in the first place.
+
+**So the answer splits.** Who sent a malformed share: nameable now, locally, for
+40% on openings. Who lied about their input: still open, and priced in section 4
+at `n` times the check.
+
 ### Why a griefing abort is worse here than in generic MPC
 
 In most MPC deployments an abort is a liveness problem: retry. **In an auction it
