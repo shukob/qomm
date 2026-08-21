@@ -247,6 +247,68 @@ leaves the evaluation field alone would be paid at the dealing rate measured in
 on every quote. **Which of the two is cheaper depends on quotes per policy
 update, and that ratio is a property of the market rather than of the protocol.**
 
+### 0.6.1 Two hundred and seventy-seven megabytes is not deployable
+
+So the matched field was taken as a starting point rather than an answer.
+
+**edaBits made it two orders of magnitude worse.** They were the obvious first
+try: comparison cost is supposed to scale with the value width rather than the
+field width, which is exactly the 31-bits-against-253 mismatch that the traffic
+is made of. Measured, `program.use_edabit(True)` gives **2,920 MB** on the
+default field and **6,257 MB** on the matched one, against 19.4 and 277.3
+without. The reason is not that the technique is bad: edaBits are preprocessing,
+and this harness measures one phase, so the generation cost lands in the run with
+no offline phase to hide in. That is the item section 4 already lists as the
+largest unmeasured unknown --- **this measures the wrong phase for it**, and the
+right measurement needs a preprocessing stage the bundled tool does not produce.
+
+**Two levers already in the circuit halve it.** `audit_gates` moves the expiry
+and active checks to the registration-time policy audit rather than paying for
+the same fact twice; `public_maker_assets` makes the asset gate a public index
+into a secret one-hot vector, which costs no communication at all.
+
+| matched field, plus | rounds | global | wall @15 ms | vs default field |
+|---|---:|---:|---:|---:|
+| nothing | 129 | 277.3 MB | 7.39 s | 14.3x / 2.04x |
+| `audit_gates` | 122 | 216.9 MB | 6.59 s | 11.2x / 1.82x |
+| `public_maker_assets` | 123 | 197.7 MB | 6.53 s | 10.2x / 1.80x |
+| **both** | **107** | **137.3 MB** | **5.63 s** | **7.1x / 1.55x** |
+
+Predicted 150 to 190 MB, measured 137.3. The second lever is **not free**: it
+publishes which markets each maker serves. All arms verified.
+
+### 0.6.2 The field may not need matching at all
+
+Binding the *dealt* shares to a commitment never needed a matched field. The
+shares sum over the integers, so `g^v = prod g^(v_i)` holds in any group
+whatever the MPC is doing. What needs matching is binding **what MP-SPDZ
+ingested** --- and there is a cheaper way to get that.
+
+The dealer already publishes a commitment per input. After the inputs are fixed,
+derive public challenge coefficients by Fiat--Shamir over those commitments; have
+the circuit compute `s = sum_j c_j v_j + r` for a committed mask `r`, and open
+`s`; check `g^s` against the homomorphic combination of the commitments. A node
+that substitutes an input shifts `s` by `sum c_j e_j`, which is non-zero except
+with probability about `2^-40` over the challenge.
+
+**The fields do not clash, and that is the whole point.** With 166 inputs of 31
+bits and 40-bit challenges the sum is at most **79 bits**, which reduces in
+neither the 127-bit MPC prime nor the 252-bit curve scalar field. It is the same
+integer on both sides, so the check is exact across them.
+
+The mask is not optional. Without it each quote opens one linear equation in the
+policy, and enough quotes with fresh challenges solve for it --- the machinery is
+already there, since the answer is opened under a trader-supplied mask.
+
+**Predicted cost: rounds +1, traffic plus one field element.** Public coefficient
+times secret is local, so the combination costs no communication, and one opening
+is one round. That leaves the default field's 19.4 MB essentially unchanged
+against 137 MB for the cheapest matched-field arm.
+
+**This is reasoned and checked arithmetically. It is not implemented and not
+measured**, and the last two things this section tried both came out on the wrong
+side of the prediction, so it belongs in the plan rather than in the results.
+
 ## 1. Three deployment profiles
 
 The measurements narrow the realistic choices to three.
