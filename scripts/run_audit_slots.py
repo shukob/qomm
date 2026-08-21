@@ -27,6 +27,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
+from scripts import hosts  # noqa: E402
+
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 
 from qomm_audit.receipts import (                                                # noqa: E402
@@ -193,7 +195,8 @@ def main() -> int:
     ap.add_argument("--skip-mpc", action="store_true")
     args = ap.parse_args()
 
-    payload = {"config": vars(args) | {"mp_spdz_root": str(args.mp_spdz_root),
+    payload = {"host": hosts.this_host(),
+               "config": vars(args) | {"mp_spdz_root": str(args.mp_spdz_root),
                                        "out": str(args.out)}}
     if not args.skip_mpc:
         print("== cover slot vs real slot on the wire ==", flush=True)

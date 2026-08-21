@@ -79,9 +79,10 @@ The statement proved is that applying the committed policy to the committed requ
 
 | makers | prove | verify | winner matches the cleartext minimum |
 |---:|---:|---:|---|
-| 4 | 73 ms | 86 ms | True |
-| 8 | 150 ms | 172 ms | True |
-| 16 | 304 ms | 352 ms | True |
+| 4 | 152 ± 0 (n=15) ms | 173 ± 0 (n=15) ms | True |
+| 8 | 307 ± 0 (n=15) ms | 350 ± 1 (n=15) ms | True |
+| 16 | 622 ± 0 (n=15) ms | 707 ± 0 (n=15) ms | True |
+| 32 | 1259 ± 3 (n=15) ms | 1430 ± 1 (n=15) ms | True |
 
 Linear in the number of makers. That fits a 60-second disclosure or a one-second RFS update; it does not fit under 200 ms.
 
@@ -90,8 +91,9 @@ Linear in the number of makers. That fits a 60-second disclosure or a one-second
 | control | rejected | why |
 |---|---|---|
 | winner swapped to a non-minimal maker | **True** | the published winner value is not what the commitmen |
-| expired maker | **True** | value -1 outside [0, 2^24) |
-| request over the size limit | **True** | value -99800 outside [0, 2^24) |
+| expired maker appears and cannot win | **True** | gated off; winner is maker 5 |
+| request nobody can fill answers `no quote` | **True** | every maker gated to the sentinel |
+| the winning maker switched off | **True** | maker 5: eligibility is not the conjunction of its t |
 | minimality proofs swapped between makers | **True** | maker 0: not shown to be at least the winner |
 | minimality for a false winner | **True** | value -1 outside [0, 2^25) |
 
@@ -99,14 +101,16 @@ Linear in the number of makers. That fits a 60-second disclosure or a one-second
 
 | quorum | assemble | an ordinary verifier accepts | no node holds the witness |
 |---|---:|---|---|
-| 3 | 1.077 ms | True | True |
-| 7 | 2.580 ms | True | True |
+| 3 | 1.827 ± 0.008 (n=20) ms | True | True |
+| 7 | 4.303 ± 0.014 (n=20) ms | True | True |
 
 Below the threshold (two nodes) the assembled proof does not verify; that is checked too.
 
-### Running the MPC over the same field as the commitments
+### The prover's shares are the circuit's shares
 
-MP-SPDZ accepts an arbitrary prime, so the circuit was run over Ed25519's scalar field to check. The output matches the cleartext reference: **the binding gap can be closed.** The figures below were measured but are not carried by an artifact in this build.
+The proof is assembled from shares, and until the circuit kept them those shares reached the prover by a route of their own --- nothing said they were the numbers the circuit computed on. A proof about numbers that merely agree with a computation is not a proof about the computation, and this was the largest thing the design asserted rather than showed.
+
+`sint.write_to_file` now makes each node keep its share of the winner, and `mp_spdz/persistence.py` reads them back. On a seven-party run at *T* = 2 over MP-SPDZ's 128-bit field the shares reconstruct to the value the cleartext reference predicts; every subset of three agrees, two do not recover it, and one flipped bit is noticed. The run ships as a fixture, so the check needs no MP-SPDZ.
 
 | makers | field | rounds | sent per party | median, 1 ms one way |
 |---:|---|---:|---:|---:|
@@ -207,7 +211,14 @@ Rounds and bytes are identical across every asset (True / True). The answers dif
 
 Allowing settlement before the proof is complete gives up the guarantee, so the three are recorded separately.
 
-**Absent from this build.** `artifacts/three_times.json` carries no rows: the runner needs MP-SPDZ on the measuring host, and the last run there did not complete. The three timestamps are recorded by `make three-times`, and until that runs this section has nothing to report rather than something to report approximately.
+| delay | priced | proved | settleable | total | meets an audited 1 s RFS slot |
+|---|---:|---:|---:|---:|---|
+| 1 ms one way | 909 ± 6 (n=3) ms | +624 ± 1 (n=3) ms | +716 ± 13 (n=3) ms | **2249 ± 19 (n=3)** ms | False |
+| 15 ms one way | 4017 ± 5 (n=3) ms | +623 ± 1 (n=3) ms | +708 ± 0 (n=3) ms | **5348 ± 5 (n=3)** ms | False |
+
+**An audited RFS does not make a one-second slot.** After the price comes back, completing the proof takes 623--624 ms and verifying it plus reaching a quorum of receipts a further 708--716 ms --- and neither depends on the delay, so neither shrinks with a closer deployment. At one millisecond one way the total is still 2.25 s.
+
+How to read it: 'priced' includes compiling the circuit and starting the processes on every run, so it is an upper bound. 'Proved' and 'settleable' are the cost of the computation itself and do not shrink with deployment. The remedies are to make the proof lighter in the number of makers --- it is `O(M)` today --- or to set the update interval to what is measured.
 
 ---
 

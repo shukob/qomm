@@ -105,6 +105,34 @@ class ComputingNode:
         self.receipts.append(receipt)
 
 
+@dataclass(frozen=True)
+class Dealing:
+    """What a dealer publishes so anyone can check what it dealt.
+
+    The signatures below make a lying *node* attributable. They say nothing
+    about a lying *dealer*: a trader that signs shares which do not sum to the
+    value it meant gets a circuit computing on something else, and every
+    signature checks out. So the dealer also publishes a commitment to each
+    share and one to the value, and the two have to agree --- the commitments
+    are additively homomorphic, so their product is a commitment to the sum, and
+    a dealing whose shares do not add up cannot be published without saying so.
+
+    Both checks are public. Neither needs the dealer's cooperation after the
+    fact, and neither needs a node to be honest about what it holds.
+    """
+
+    value_commitment: object
+    share_commitments: list[object]
+
+    def adds_up(self, key) -> bool:
+        """The shares commit to something that sums to the committed value."""
+        group = key.group
+        total = group.identity()
+        for commitment in self.share_commitments:
+            total = group.mul(total, commitment)
+        return group.encode(total) == group.encode(self.value_commitment)
+
+
 @dataclass
 class InputParty:
     """Someone with a secret and no part in computing on it."""
@@ -117,6 +145,24 @@ class InputParty:
     @property
     def verifying_key(self) -> Ed25519PublicKey | None:
         return self.signing_key.public_key() if self.signing_key else None
+
+    def deal_committed(self, value: int, nodes: list[ComputingNode], key,
+                       rng=None) -> tuple[Dealing, list[int]]:
+        """Deal one value and publish what would show a bad dealing.
+
+        Returns the public part and the blindings, which the dealer keeps and
+        hands to each node with its share so the node can open its own
+        commitment. A node that is given a share not matching its commitment
+        knows before it computes on anything.
+        """
+        shares = split(value, self.n_nodes, self.value_bits, rng)
+        blindings = [key.random_blinding() for _ in shares]
+        share_commitments = [key.commit(share, blinding)
+                             for share, blinding in zip(shares, blindings)]
+        value_commitment = key.commit(value, sum(blindings) % key.group.order)
+        for node, share in zip(nodes, shares):
+            node.receive(share)
+        return Dealing(value_commitment, share_commitments), blindings
 
     def deal(self, values: Iterable[int], nodes: list[ComputingNode], rng=None) -> None:
         """Hand each node its share of every value, in the order the program reads them.
@@ -169,3 +215,10 @@ class Trader(InputParty):
 
 class MarketMaker(InputParty):
     """The party a price policy belongs to."""
+
+
+def check_share(key, dealing: Dealing, index: int, share: int, blinding: int) -> bool:
+    """A node checking its own share before it computes on it."""
+    group = key.group
+    return group.encode(key.commit(share, blinding)) == \
+        group.encode(dealing.share_commitments[index])

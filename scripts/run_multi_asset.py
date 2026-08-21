@@ -17,6 +17,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from scripts import hosts  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 
 
@@ -87,7 +92,8 @@ def main() -> int:
           f"timing spread={summary['timing_gap_s']:.4f}s "
           f"distinct answers={summary['distinct_answers']}", flush=True)
 
-    payload = {"config": {k: (str(v) if isinstance(v, Path) else v)
+    payload = {"host": hosts.this_host(),
+               "config": {k: (str(v) if isinstance(v, Path) else v)
                           for k, v in vars(args).items()},
                "scaling": scaling, "asset_probes": probes, "obliviousness": summary}
     args.out.parent.mkdir(parents=True, exist_ok=True)

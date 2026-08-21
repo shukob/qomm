@@ -19,6 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import hosts  # noqa: E402
+
 from qomm_sim.experiment import DPParams                     # noqa: E402
 from qomm_sim.market import SIZE_BUCKETS, SimConfig         # noqa: E402
 
@@ -119,6 +121,8 @@ def main() -> None:
 
     out = ART / "snr_model.json"
     out.write_text(json.dumps({
+        # the machine this was taken on, so a reader does not have to ask
+        "host": hosts.this_host(),
         "volume_cap": cap, "epsilon_per_window": dp.epsilon_per_window,
         "epsilon_per_field": eps_field, "noise_scale": noise,
         "mean_size_lots": mean_size, "trades_per_firm_per_s": per_firm_per_s,

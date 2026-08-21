@@ -94,8 +94,12 @@ def main() -> int:
             print(f"  {len(empty)} carry no rows, so nothing may be quoted from "
                   f"them: {', '.join(sorted(empty))}")
         if unlabelled:
-            print(f"  {len(unlabelled)} carry no host label: "
-                  f"{', '.join(sorted(unlabelled))}")
+            # Not stamped after the fact: which machine an old artifact came
+            # from is not something to guess, and a guessed label is worse than
+            # none. The runners record it now, so the list shrinks as each is
+            # regenerated.
+            print(f"  {len(unlabelled)} carry no host label, having been written "
+                  f"before their runner recorded one: {', '.join(sorted(unlabelled))}")
         return 0
 
     if not MANIFEST.exists():

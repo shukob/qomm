@@ -1,4 +1,5 @@
 {
+ "host": "host-c",
  "volume_cap": 300,
  "epsilon_per_window": 1.0,
  "epsilon_per_field": 0.25,

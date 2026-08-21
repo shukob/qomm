@@ -182,3 +182,57 @@ def test_a_dealer_without_a_key_leaves_nothing_to_audit():
     InputParty("trader", N_PARTIES, 32).deal([100], nodes)
     signing = Ed25519PrivateKey.generate()
     assert audit_node(nodes[0], "trader", signing.public_key(), nodes[0].inputs) == [0]
+
+
+# --- and a dealer that deals shares which do not add up ---------------------
+#
+# The signatures above make a lying node attributable and say nothing about a
+# lying dealer: a trader that signs shares summing to something other than what
+# it meant gets a circuit computing on that something else, and every signature
+# checks out. Commitments close it, and they close it publicly -- no dealer
+# cooperation after the fact, and no node has to be honest about what it holds.
+
+from zk.commit import Pedersen                                                # noqa: E402
+from zk.groups import make_group                                              # noqa: E402
+
+from qomm_transport.roles import Dealing, check_share                         # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def key():
+    return Pedersen(make_group("ed25519"), b"qomm:transport:v1")
+
+
+def test_an_honest_dealing_adds_up_and_every_node_can_check_its_own(key):
+    nodes = [ComputingNode(i) for i in range(N_PARTIES)]
+    dealing, blindings = InputParty("trader", N_PARTIES, 32).deal_committed(
+        100, nodes, key)
+    assert dealing.adds_up(key)
+    for i, node in enumerate(nodes):
+        assert check_share(key, dealing, i, node.inputs[0], blindings[i])
+
+
+def test_a_node_handed_a_share_that_is_not_its_own_knows_before_computing(key):
+    nodes = [ComputingNode(i) for i in range(N_PARTIES)]
+    dealing, blindings = InputParty("trader", N_PARTIES, 32).deal_committed(
+        100, nodes, key)
+    assert not check_share(key, dealing, 3, nodes[3].inputs[0] + 1, blindings[3])
+
+
+def test_a_dealing_whose_shares_do_not_sum_to_the_value_is_visible(key):
+    """The dealer's lie, which no signature over the shares would catch."""
+    nodes = [ComputingNode(i) for i in range(N_PARTIES)]
+    dealing, blindings = InputParty("trader", N_PARTIES, 32).deal_committed(
+        100, nodes, key)
+    order = key.group.order
+    forged = Dealing(key.commit(101, sum(blindings) % order),
+                     dealing.share_commitments)
+    assert not forged.adds_up(key), "a dealing that sums to something else passed"
+
+
+def test_swapping_one_share_commitment_breaks_the_sum(key):
+    nodes = [ComputingNode(i) for i in range(N_PARTIES)]
+    dealing, _ = InputParty("trader", N_PARTIES, 32).deal_committed(100, nodes, key)
+    swapped = list(dealing.share_commitments)
+    swapped[0] = swapped[1]
+    assert not Dealing(dealing.value_commitment, swapped).adds_up(key)

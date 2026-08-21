@@ -60,5 +60,32 @@
     "reconstructed": 400118,
     "cleartext_reference": 400118,
     "note": "every subset of three agrees, two do not recover it, and flipping one bit of one node's share is noticed. The format took three things that are not obvious -- little-endian, Montgomery form, one-based evaluation points -- and was confirmed against a run whose answer the cleartext reference already gives, because a reader that has not reproduced something known is not one to trust."
+  },
+  "split_range_proofs": {
+    "question": "what it costs to prove amount and price at their own widths instead of both at the wider",
+    "before": {
+      "note": "one aggregated bulletproof over both fields",
+      "package_bytes": {
+        "8": 2240,
+        "16": 2432,
+        "32": 2624
+      }
+    },
+    "after": {
+      "note": "one proof per field, each at its declared width",
+      "package_bytes": {
+        "8": 2656,
+        "16": 2912,
+        "32": 3168
+      }
+    },
+    "delta": {
+      "bytes_pct": 19,
+      "settle_ms_pct": 3
+    },
+    "prediction": {
+      "written_before": "bytes +40%, verification +60%",
+      "outcome": "bytes +19%, verification +3%. Aggregation was saving less than expected: two bulletproofs over one value each are not far off one over two, and the verifier's cost is dominated by the rest of the settlement either way. The narrow declaration is worth having and was nearly free."
+    }
   }
 }

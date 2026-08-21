@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import hosts  # noqa: E402
 from qomm_sim.audit import audit_window                       # noqa: E402
 from qomm_sim.experiment import DPParams, make_disclosure      # noqa: E402
 from qomm_sim.engine import run_arm                            # noqa: E402
@@ -80,6 +81,12 @@ def main() -> int:
         bucket["violations"] += 0 if row["within_claim"] else 1
 
     payload = {
+
+        # the machine this was taken on, so a reader does
+
+        # not have to ask
+
+        "host": hosts.this_host(),
         "config": {"steps": args.steps, "window_steps": args.window_steps,
                    "n_entities": args.n_entities, "arrival_rate": args.arrival_rate,
                    "trials": args.trials, "request_cap": dp.request_cap,

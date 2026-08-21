@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import hosts  # noqa: E402
 from scripts.measure import render, scaled, summarise, value            # noqa: E402
 
 from qomm_audit.receipts import digest                                   # noqa: E402
@@ -186,7 +187,9 @@ def main() -> int:
                          "links here are 0.43 ms within a site and 8.7 ms between")
     args = ap.parse_args()
 
-    payload = {"config": {k: v for k, v in vars(args).items() if k != "out"}, "by_hops": []}
+    payload = {"host": hosts.this_host(),
+               "config": {k: v for k, v in vars(args).items() if k != "out"},
+               "by_hops": []}
     for hops in args.hops:
         print(f"== relay cascade of {hops} hop(s) ==")
         session = asyncio.run(run_session(args.clients, args.nodes, args.slots,

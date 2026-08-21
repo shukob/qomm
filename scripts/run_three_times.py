@@ -31,8 +31,12 @@ from qomm_audit.receipts import (                                               
     GENESIS, AuditLedger, SlotSpec, digest, sign_receipt,
 )
 from zk.groups import make_group
+from scripts import hosts  # noqa: E402
 from scripts.measure import exact, render, summarise          # noqa: E402                                                  # noqa: E402
-from zk.quote_proof import MakerWitness, QuoteProver, QuoteVerifier               # noqa: E402
+from zk.commit import Pedersen
+from zk.quote_proof import (
+    FIELDS, MakerWitness, QuoteProver, QuoteVerifier,
+)               # noqa: E402
 
 SENTINEL = 1 << 20
 
@@ -104,10 +108,15 @@ def main() -> int:
     group = make_group("ed25519")
     import random
     rng = random.Random(5)
+    # Policies as they go on the record: values and the blindings that hide
+    # them. The quote proof is about registered policies, so a witness without
+    # its registration blindings is not one.
+    key = Pedersen(group, b"qomm:quote:v1")
     makers = [MakerWitness(mid=100_000 + rng.randint(-15, 15), half=rng.randint(5, 40),
                            slope=rng.choice([0, 1, 2]), invcoef=rng.choice([0, 1, 2]),
                            inv=rng.randint(0, 50), maxqty=rng.choice([200, 400]),
-                           expiry=1_000 + rng.randint(1, 600), active=1)
+                           expiry=1_000 + rng.randint(1, 600), active=1,
+                           blindings={f: key.random_blinding() for f in FIELDS})
               for _ in range(args.n_mm)]
 
     rows = []
@@ -141,7 +150,8 @@ def main() -> int:
               f"meets an audited {args.rfs_interval_ms:g}ms RFS slot="
               f"{row['audited_rfs_met']}", flush=True)
 
-    payload = {"config": {k: (str(v) if isinstance(v, Path) else v)
+    payload = {"host": hosts.this_host(),
+               "config": {k: (str(v) if isinstance(v, Path) else v)
                           for k, v in vars(args).items()}, "rows": rows}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

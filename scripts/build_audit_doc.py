@@ -160,8 +160,8 @@ def main() -> int:
     w("| makers | prove | verify | winner matches the cleartext minimum |")
     w("|---:|---:|---:|---|")
     for r in quote["scaling"]:
-        w(f"| {r['makers']} | {render(r['prove_ms'], 0)} ms "
-          f"| {render(r['verify_ms'], 0)} ms | {r['matches_cleartext']} |")
+        w(f"| {r['makers']} | {render(r['prove'], 0)} ms "
+          f"| {render(r['verify'], 0)} ms | {r['matches_cleartext']} |")
     w("\nLinear in the number of makers. That fits a 60-second disclosure or a "
       "one-second RFS update; it does not fit under 200 ms.\n")
     w("### Forgeries, rejected\n")
@@ -173,15 +173,23 @@ def main() -> int:
     w("| quorum | assemble | an ordinary verifier accepts | no node holds the witness |")
     w("|---|---:|---|---|")
     for j in quote["joint"]:
-        w(f"| {j['size']} | {render(j['assemble_ms'], 3)} ms "
+        w(f"| {j['size']} | {render(j['assemble'], 3)} ms "
           f"| {j['verified_by_ordinary_verifier']} | {j['no_node_holds_witness']} |")
     w("\nBelow the threshold (two nodes) the assembled proof does not verify; "
       "that is checked too.\n")
-    w("### Running the MPC over the same field as the commitments\n")
-    w("MP-SPDZ accepts an arbitrary prime, so the circuit was run over "
-      "Ed25519's scalar field to check. The output matches the cleartext "
-      "reference: **the binding gap can be closed.** The figures below were "
-      "measured but are not carried by an artifact in this build.\n")
+    w("### The prover's shares are the circuit's shares\n")
+    w("The proof is assembled from shares, and until the circuit kept them "
+      "those shares reached the prover by a route of their own --- nothing "
+      "said they were the numbers the circuit computed on. A proof about "
+      "numbers that merely agree with a computation is not a proof about the "
+      "computation, and this was the largest thing the design asserted rather "
+      "than showed.\n")
+    w("`sint.write_to_file` now makes each node keep its share of the winner, "
+      "and `mp_spdz/persistence.py` reads them back. On a seven-party run at "
+      "*T* = 2 over MP-SPDZ's 128-bit field the shares reconstruct to the "
+      "value the cleartext reference predicts; every subset of three agrees, "
+      "two do not recover it, and one flipped bit is noticed. The run ships as "
+      "a fixture, so the check needs no MP-SPDZ.\n")
     w("| makers | field | rounds | sent per party | median, 1 ms one way |")
     w("|---:|---|---:|---:|---:|")
     w("| 8 | default 128-bit | 64 | 1.549 MB | 0.568 s |")
@@ -284,9 +292,16 @@ def main() -> int:
             w(f"| {r['delay_ms']:g} ms one way | {render(r['price'], 0)} ms "
               f"| +{render(r['proof'], 0)} ms | +{render(r['settle'], 0)} ms "
               f"| **{render(r['total'], 0)}** ms | {r['audited_rfs_met']} |")
-        w("\n**An audited RFS does not make a one-second slot.** After the price "
-          "comes back, completing the proof takes roughly 550 ms and verifying "
-          "it plus reaching a quorum of receipts a further 650 ms.\n")
+        proofs = [value(r["proof"]) for r in three["rows"]]
+        settles = [value(r["settle"]) for r in three["rows"]]
+        w(f"\n**An audited RFS does not make a one-second slot.** After the "
+          f"price comes back, completing the proof takes "
+          f"{min(proofs):.0f}--{max(proofs):.0f} ms and verifying it plus "
+          f"reaching a quorum of receipts a further "
+          f"{min(settles):.0f}--{max(settles):.0f} ms --- and neither depends "
+          "on the delay, so neither shrinks with a closer deployment. At one "
+          "millisecond one way the total is still "
+          f"{value(three['rows'][0]['total']) / 1000:.2f} s.\n")
         w("How to read it: 'priced' includes compiling the circuit and starting "
           "the processes on every run, so it is an upper bound. 'Proved' and "
           "'settleable' are the cost of the computation itself and do not "
