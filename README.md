@@ -94,6 +94,12 @@ Python:
 the runners wrote them. Each carries the host it ran on as a label (`host-a`,
 `host-b`, `host-c`); `scripts/hosts.py` is the mapping.
 
+## Documents
+
+- [`AUDIT.md`](AUDIT.md) --- what the audit machinery checks, what it catches, and what it costs
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) --- what every measurement implies for what to deploy where
+- [`REGULATION.md`](REGULATION.md) --- which accounts and which statutes a live deployment touches, in Japan and in four other jurisdictions
+
 ## Depends on
 
 - [zkpi](https://github.com/shukob/zkpi)
