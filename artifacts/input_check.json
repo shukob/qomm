@@ -1,0 +1,166 @@
+{
+  "host": "host-a",
+  "group": "ed25519",
+  "repeats": 30,
+  "challenge_bits": 40,
+  "scalar_mult_us": {
+    "n": 200,
+    "mean": 68.64761700853705,
+    "sd": 1.8195910302890008,
+    "median": 68.02147254347801,
+    "min": 66.85778498649597,
+    "max": 78.62318307161331,
+    "rsd": 0.02650625192222937
+  },
+  "width_budget": {
+    "n_inputs": 166,
+    "value_bits": 31,
+    "challenge_bits": 40,
+    "opening_bits": 120,
+    "mask_bits": 119,
+    "field_bits_needed": 164,
+    "group_order_bits": 252,
+    "mp_spdz_default_128": "refused: 166 inputs of 31 bits with 40-bit coefficients open to 120 bits, which fits --- but the 119-bit mask has to be dealt to 7 nodes with 40 bits of slack per share, and that needs 164 bits against the narrower of the MPC prime (127) and the group order (252). The forty bits are spent twice, once on the combination and once on each share. Widen the field, or say in the artifact which of the two hidings was given up.",
+    "wide_enough": "fits",
+    "group_order": "fits",
+    "finding": "The check does not run in the field it was proposed to save. It needs about 164 bits against 253 for the group order, and at 253 the same widening also makes threshold_sigma assemble correctly --- so the question is whether 164 is worth it over 253, not whether the check avoids widening at all."
+  },
+  "rows": [
+    {
+      "n_inputs": 16,
+      "build_ms": {
+        "n": 30,
+        "mean": 1.6801954091837008,
+        "sd": 0.010893780554434134,
+        "median": 1.6781974118202925,
+        "min": 1.6649793833494186,
+        "max": 1.7124032601714134,
+        "rsd": 0.006483639042750821
+      },
+      "verify_ms": {
+        "n": 30,
+        "mean": 1.4248863483468692,
+        "sd": 0.007620035635452771,
+        "median": 1.4259957242757082,
+        "min": 1.4052181504666805,
+        "max": 1.43772317096591,
+        "rsd": 0.00534781994668797
+      },
+      "accepted": true,
+      "published_bytes_incremental": {
+        "exact": 96
+      },
+      "published_bytes_standalone": {
+        "exact": 608
+      },
+      "opening_bits": {
+        "exact": 116
+      },
+      "soundness_bits": {
+        "exact": 40
+      }
+    },
+    {
+      "n_inputs": 64,
+      "build_ms": {
+        "n": 30,
+        "mean": 6.383242349450787,
+        "sd": 0.016653486538114822,
+        "median": 6.381372222676873,
+        "min": 6.35308213531971,
+        "max": 6.422604899853468,
+        "rsd": 0.0026089384714568587
+      },
+      "verify_ms": {
+        "n": 30,
+        "mean": 5.412847936774294,
+        "sd": 0.016559007827123527,
+        "median": 5.410419078543782,
+        "min": 5.381550639867783,
+        "max": 5.445447750389576,
+        "rsd": 0.003059204326547481
+      },
+      "accepted": true,
+      "published_bytes_incremental": {
+        "exact": 96
+      },
+      "published_bytes_standalone": {
+        "exact": 2144
+      },
+      "opening_bits": {
+        "exact": 118
+      },
+      "soundness_bits": {
+        "exact": 40
+      }
+    },
+    {
+      "n_inputs": 166,
+      "build_ms": {
+        "n": 30,
+        "mean": 16.380781090507906,
+        "sd": 0.024514860628068874,
+        "median": 16.37931284494698,
+        "min": 16.33477210998535,
+        "max": 16.429496929049492,
+        "rsd": 0.0014965623734679162
+      },
+      "verify_ms": {
+        "n": 30,
+        "mean": 13.881629472598433,
+        "sd": 0.026903559201001244,
+        "median": 13.876805314794183,
+        "min": 13.834285084158182,
+        "max": 13.946215156465769,
+        "rsd": 0.0019380692485783011
+      },
+      "accepted": true,
+      "published_bytes_incremental": {
+        "exact": 96
+      },
+      "published_bytes_standalone": {
+        "exact": 5408
+      },
+      "opening_bits": {
+        "exact": 120
+      },
+      "soundness_bits": {
+        "exact": 40
+      }
+    },
+    {
+      "n_inputs": 512,
+      "build_ms": {
+        "n": 30,
+        "mean": 50.289636834835015,
+        "sd": 0.14731491055624707,
+        "median": 50.26454711332917,
+        "min": 50.10195588693023,
+        "max": 51.02025344967842,
+        "rsd": 0.002929329377344078
+      },
+      "verify_ms": {
+        "n": 30,
+        "mean": 42.58153857663274,
+        "sd": 0.04171922255580153,
+        "median": 42.57666110061109,
+        "min": 42.5018179230392,
+        "max": 42.665028013288975,
+        "rsd": 0.0009797490638042746
+      },
+      "accepted": true,
+      "published_bytes_incremental": {
+        "exact": 96
+      },
+      "published_bytes_standalone": {
+        "exact": 16480
+      },
+      "opening_bits": {
+        "exact": 121
+      },
+      "soundness_bits": {
+        "exact": 40
+      }
+    }
+  ]
+}

@@ -305,9 +305,145 @@ times secret is local, so the combination costs no communication, and one openin
 is one round. That leaves the default field's 19.4 MB essentially unchanged
 against 137 MB for the cheapest matched-field arm.
 
-**This is reasoned and checked arithmetically. It is not implemented and not
-measured**, and the last two things this section tried both came out on the wrong
-side of the prediction, so it belongs in the plan rather than in the results.
+### 0.6.3 It was implemented, and it does not fit either
+
+Written as `zk/input_check.py`, and the cryptography works: 27 tests, a
+substituted input caught, two errors that try to cancel caught, coefficients that
+move with the commitments. Cost on host-a over 166 inputs: **16.4 ms to build,
+13.9 ms to verify** --- 204 scalar multiplications --- against 2.06x of a 3.6 s
+quote for the matched field.
+
+**The obstacle is the mask, and the arithmetic above missed it.** The opening is
+120 bits and fits a 127-bit prime with seven to spare, which is what section
+0.6.2 counted. But **119 of those 120 bits are the mask**, and the mask is an
+input like any other: it is dealt to the nodes through
+`qomm_transport.roles.split`, additively over the integers with `SLACK_BITS` of
+room per share. That spends the forty bits **twice** --- once to hide the
+combination in the opening, once to hide each share from its node --- and seven
+shares of a 119-bit value need **164 bits of field**.
+
+The 127-bit prime does not hold it at **any** coefficient width. Not at 32 bits,
+not at 8, not at 3 where the check would be worthless anyway; the floor is
+`124 + challenge_bits`.
+
+| | field needed |
+|---|---:|
+| the opening alone (what 0.6.2 counted) | 120 bits |
+| the opening plus dealing the mask | **164 bits** |
+| MP-SPDZ default | 127 bits |
+| group order, where `threshold_sigma` wants it | 253 bits |
+
+**So the check does not avoid widening the field. It lowers the width from 253
+to 164** --- and at 253 the same widening also makes `threshold_sigma` assemble
+correctly, which 164 does not. The question is whether 164 is worth it over 253,
+not whether the check escapes the problem.
+
+*Prediction and miss.* Section 0.6.2 predicted "rounds +1, traffic plus one field
+element" and called the fields "not clashing, and that is the whole point". The
+opening does not clash. The mask does, and it was not counted. That is the fourth
+prediction in this section to land on the wrong side, and the three before it
+were about someone else's implementation --- this one was about arithmetic that
+was written down here.
+
+One thing the implementation did settle in the right direction: the width grows
+with `log2` of the input count, so **covering a thousand times more inputs costs
+ten bits**. What sets the floor is the mask, not the coverage, so one check over
+everything is the right shape rather than one per maker.
+
+### 0.6.4 Both halves, run and measured
+
+The check needs about 165 bits and the sigma assembly needs the group order at
+253, so the question was whether the narrower field is worth what it gives up.
+Run at 177 bits --- the next prime above `2^176` --- with the check on and off,
+against both ends, all four arms verified against the cleartext answer:
+
+| | rounds | global | wall @15 ms | vs default |
+|---|---:|---:|---:|---:|
+| MP-SPDZ default, 128 bits | 64 | 19.4 MB | 3.635 s | --- |
+| 177 bits, no check | 124 | 150.8 MB | 6.228 s | 1.94x / 7.8x / 1.71x |
+| **177 bits, input check on** | **125** | **150.8 MB** | **6.377 s** | 1.95x / 7.8x / 1.75x |
+| group order, 253 bits | 129 | 277.3 MB | 7.783 s | 2.02x / 14.3x / 2.14x |
+
+**The check itself costs one round, no measurable traffic and 149 ms.** That is
+what section 0.6.2 predicted before the mask was counted, and it holds --- the
+prediction was wrong about where the check runs, not about what it costs once it
+does. All four predictions for this run landed, after four in a row that did not.
+
+**The narrower field buys 46% of the traffic and 20% of the clock**, at almost
+the same round count.
+
+### 0.6.5 Which one to take
+
+**253, and the reason is not the arithmetic.** What 177 bits gives up is
+`threshold_sigma` assembling, and that is what makes the quote proof publicly
+verifiable --- the sigma responses combine across nodes by Lagrange *in the
+scalar field*, so the shares have to be over the group order or the assembly
+reconstructs the wrong thing. A publicly checkable proof that the returned price
+was the minimum is the system's headline claim. Trading it for 126 MB is the
+wrong way round when that is about 18 MB a node, which a gigabit link absorbs in
+a seventh of a second.
+
+So the shape of the answer:
+
+- **128 bits**: fastest, and neither binding is available. The right choice only
+  where the quote proof is skipped anyway and a substituted input is something
+  to detect afterwards rather than prevent (`DEPLOYMENT.md` profile A).
+- **177 bits**: the input check runs, one round. The sigma assembly does not.
+- **253 bits**: both. 2.14x the clock and 14.3x the traffic of the default,
+  and the check still costs one round on top.
+
+The two mechanisms are complementary rather than alternatives, which is the part
+that took four wrong predictions to see. The check says the inputs were the
+committed ones and costs a round; the sigma assembly says the whole computation
+was right and can be checked by anyone afterwards. **At 253 there is no reason
+to choose between them.**
+
+### 0.6.6 It does run at 128 bits, and 0.6.3 was wrong about why
+
+Section 0.6.3 concluded the check needs 165 bits. That was about **one parameter
+choice**, not about the field. The mask is
+`value_bits + challenge_bits + log2(n) + statistical_bits` wide and the field has
+to hold seven shares of it with forty bits of slack, so the budget is
+
+    challenge_bits + statistical_bits <= 41
+
+at 127 bits. Forty-bit coefficients leave one bit of gap and do not fit. **Six-bit
+coefficients repeated seven times fit in 126 bits** --- and repetition is free in
+rounds, because seven independent combinations wait on nothing and open together.
+
+| | rounds | global | wall @15 ms | verified |
+|---|---:|---:|---:|:---:|
+| default field, no check | 64 | 19.37 MB | 3.583 s | yes |
+| **default field, input check (6 bits x 7)** | **65** | **19.38 MB** | **3.631 s** | yes |
+| 177 bits, input check | 125 | 150.84 MB | 6.377 s | yes |
+| group order, no check | 129 | 277.26 MB | 7.783 s | yes |
+
+**One round, six kilobytes, forty-seven milliseconds.** Soundness is `2^-42`,
+which clears the `2^-40` the rest of the stack works to.
+
+**What it gives up is the hiding of the opening, and that part is real.**
+Repetition buys soundness back and dilutes the gap at the same time, so the curve
+has a peak --- about `2^-34`, at two to four coefficient bits with eleven to
+twenty-six repetitions --- and `2^-40` is out of reach at 127 bits anywhere on it.
+The shipped setting sits at `2^-32`. `narrow_tradeoff` in `zk/input_check.py`
+tabulates the whole curve, and a test holds the peak so it cannot drift.
+
+So the field question resolves differently than 0.6.5 said:
+
+- **128 bits with the check** binds the inputs for one round and six kilobytes,
+  at `2^-32` hiding on the check's own opening. This is the answer for the
+  deployment profiles that were going to skip binding altogether.
+- **253 bits** additionally makes `threshold_sigma` assemble, which is what makes
+  the quote proof publicly verifiable, for 2.14x the clock and 14.3x the traffic.
+- **177 bits buys nothing either of those two does not**, now that the check runs
+  in the narrow field. It was the answer to a question that turned out to be
+  badly posed.
+
+*Prediction and miss, again, and this one was mine twice over.* 0.6.2 predicted
+the check would be free and did not count the mask. 0.6.3 counted the mask and
+concluded the check could not run, without checking whether a different split of
+the budget would fit. Both were arithmetic written down here. The measurement
+that settles it took one run.
 
 ## 1. Three deployment profiles
 

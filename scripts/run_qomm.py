@@ -320,9 +320,17 @@ def main() -> int:
     ap.add_argument("--user-qty", type=int, default=100)
     ap.add_argument("--user-dir", type=int, default=0)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--field-bits", type=int, default=128,
+                    help="the field the shares are reconstructed in; has to "
+                         "match the prime the circuit runs over")
     ap.add_argument("--bit-length", type=int, default=63)
     ap.add_argument("--argmin-arity", type=int, default=2)
     ap.add_argument("--edabit", action="store_true")
+    ap.add_argument("--input-check", action="store_true",
+                    help="bind the circuit's inputs to the published commitments")
+    ap.add_argument("--trunc-pr", action="store_true",
+                    help="probabilistic truncation: a comparison mask sized to the "
+                         "value plus a statistical gap instead of a field element")
     ap.add_argument("--protocol", default="malicious-shamir-party.x")
     ap.add_argument("--stop-after", default="tournament",
                     choices=("price", "direction", "gates", "tournament"),
@@ -373,6 +381,7 @@ def main() -> int:
         "--mode", args.mode, "--rfs-steps", str(args.rfs_steps),
         "--disclose", args.disclose, "--user-qty", str(args.user_qty),
         "--user-dir", str(args.user_dir), "--seed", str(args.seed),
+        "--field-bits", str(args.field_bits),
         "--is-real", str(args.is_real),
         "--n-assets", str(args.n_assets),
         "--user-asset", str(args.user_asset),
@@ -380,6 +389,8 @@ def main() -> int:
         "--argmin-arity", str(args.argmin_arity),
         "--stop-after", args.stop_after,
         *(["--edabit"] if args.edabit else []),
+        *(["--trunc-pr"] if args.trunc_pr else []),
+        *(["--input-check"] if args.input_check else []),
         "--n-requests", str(args.n_requests),
         *(["--public-maker-assets"] if args.public_maker_assets else []),
         *(["--audit-gates"] if args.audit_gates else []),
@@ -404,7 +415,9 @@ def main() -> int:
         "delay_ms": args.delay_ms, "repeats": args.repeats,
         "host": this_host(),
         "bit_length": args.bit_length, "argmin_arity": args.argmin_arity,
-        "edabit": args.edabit, "protocol": args.protocol, "is_real": args.is_real,
+        "edabit": args.edabit, "trunc_pr": args.trunc_pr,
+        "input_check": args.input_check,
+        "field_bits": args.field_bits, "protocol": args.protocol, "is_real": args.is_real,
         "prime": str(args.prime) if args.prime else None,
         "n_assets": args.n_assets, "user_asset": args.user_asset,
         "batch_size": args.batch_size, "file_prep": args.file_prep,

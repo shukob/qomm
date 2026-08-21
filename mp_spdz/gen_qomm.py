@@ -40,6 +40,18 @@ from pathlib import Path
 FIELDS = ("asset", "mid", "half", "slope", "invcoef", "inv", "maxqty",
           "expiry", "active", "use_ref")
 
+def mask_bits_for(n_values: int, value_bits: int, challenge_bits: int = 40,
+                  statistical_bits: int = 40) -> int:
+    """How wide the input check's mask has to be to hide what it is added to.
+
+    `zk/input_check.py` is the other half of this; the two have to agree on the
+    number or the opening does not check anything. Kept here as well because the
+    circuit is what has to deal the mask, and dealing it is what sets the field.
+    """
+    combination = value_bits + challenge_bits + max(0, (n_values - 1).bit_length())
+    return combination + statistical_bits
+
+
 def sentinel_for(bit_length: int, padded_mm: int, max_cost: int) -> int:
     """Sentinel that pushes ineligible market makers out of the tournament.
 
@@ -87,6 +99,10 @@ def build_program(
     argmin_arity: int = 2,
     price_conditionals: int = 0,
     edabit: bool = False,
+    trunc_pr: bool = False,
+    input_check: bool = False,
+    check_coefficients: list | None = None,
+    check_repeats: int = 7,
     stop_after: str = "tournament",
 ) -> str:
     """Emit the .mpc source. ``n_mm`` must be a power of two (padded by caller).
@@ -102,6 +118,10 @@ def build_program(
         raise ValueError(f"--stop-after names layers of the RFQ circuit; "
                          f"mode {mode} is built differently")
     ref_table = ref_table or [ref_mid]
+    # a fixture stands in for the Fiat-Shamir derivation, which needs the
+    # commitments; the cost does not depend on which coefficients they are.
+    check_coefficients = check_coefficients or [
+        1 + (617 * k) % ((1 << 6) - 1) for k in range(64)]
     maker_assets = maker_assets or [i % n_assets for i in range(n_mm)]
     lines: list[str] = []
     w = lines.append
@@ -110,6 +130,7 @@ def build_program(
     w("")
     w(f"mode={mode} M={n_mm} parties={n_parties} disclose={disclose} "
       f"bits={bit_length} argmin_arity={argmin_arity} edabit={edabit} "
+      f"trunc_pr={trunc_pr} "
       f"price_conditionals={price_conditionals}"
       + (f" rfs_steps={rfs_steps}" if mode == "rfs" else ""))
     w('"""')
@@ -118,6 +139,11 @@ def build_program(
     if edabit:
         w("# push comparison bit generation into preprocessing")
         w("program.use_edabit(True)")
+    if trunc_pr:
+        w("# probabilistic truncation: the mask is value-width plus a statistical")
+        w("# gap rather than a whole field element, which is the difference that")
+        w("# a wide field makes to a comparison.")
+        w("program.use_trunc_pr = True")
     w("")
     w(f"M = {n_mm}")
     w(f"N_PARTIES = {n_parties}")
@@ -181,6 +207,32 @@ def build_program(
     for f in FIELDS:
         w(f"    col_{f}[i] = secret_input()")
     w("")
+    if input_check:
+        w("")
+        w("# ---- input check: one random linear combination -------------------")
+        w("# The coefficients are public and derived from the commitments the")
+        w("# dealer published, so a node choosing what to substitute cannot see")
+        w("# them first. Public times secret is local, so the combination costs")
+        w("# no communication at all; the opening below is the whole price.")
+        w("# `zk/input_check.py` is the other half --- it combines the same")
+        w("# coefficients into the commitments and checks this opening against it.")
+        w("# Repetition rather than wider coefficients: at 127 bits the budget is")
+        w("# challenge + hiding <= 41, so soundness is bought back by opening")
+        w("# several independent combinations, which cost one round together")
+        w("# because none of them waits on another.")
+        w(f"CHECK_COEFF = {check_coefficients}")
+        w(f"CHECK_REPEATS = {check_repeats}")
+        w("check_masks = [secret_input() for _ in range(CHECK_REPEATS)]")
+        w("for _r in range(CHECK_REPEATS):")
+        w("    combination = check_masks[_r]")
+        w("    _k = 0")
+        w("    for i in range(M):")
+        for f in FIELDS:
+            w(f"        combination = combination + col_{f}[i] * "
+              f"CHECK_COEFF[(_r * 7919 + _k) % len(CHECK_COEFF)]")
+            w("        _k += 1")
+        w("    print_ln('QOMM_INPUT_CHECK_%s=%s', _r, combination.reveal())")
+        w("")
     w("idx = Array(M, sint)")
     w("for i in range(M):")
     w("    idx[i] = sint(i)")
@@ -506,6 +558,8 @@ def build_inputs(
     value_bits: int = 32,
     field_bits: int = 128,
     use_ref: int = 1,
+    input_check: bool = False,
+    check_repeats: int = 7,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
 
@@ -525,8 +579,9 @@ def build_inputs(
     # same seed would stop meaning the same market.
     share_rng = random.Random(seed ^ 0x5EED)
 
-    def deal(value: int) -> None:
-        for party, share in enumerate(split(int(value), n_parties, value_bits,
+    def deal(value: int, width: int | None = None) -> None:
+        for party, share in enumerate(split(int(value), n_parties,
+                                            value_bits if width is None else width,
                                             share_rng)):
             per_party[party].append(share)
 
@@ -567,6 +622,21 @@ def build_inputs(
         policies.append(pol)
         for f in FIELDS:
             deal(pol[f])
+
+    if input_check:
+        # The mask the combination is opened under, read last because the circuit
+        # reads it last. Without it the opening is one linear equation in the
+        # policy, and enough of them solve for it.
+        #
+        # It is much wider than a policy field, and that width is the whole
+        # reason this needs a wider prime than the default: it is dealt like
+        # every other input, so the field has to hold `n_parties` shares of it.
+        n_values = n_mm * len(FIELDS) + n_requests * 4 + 2
+        width = mask_bits_for(n_values, value_bits, challenge_bits=6,
+                              statistical_bits=35)
+        check_field_width(n_parties, width, field_bits)
+        for _ in range(check_repeats):
+            deal(share_rng.randrange(1 << width), width=width)
 
     # cleartext reference (what the circuit must reproduce)
     best_price = None
@@ -652,6 +722,14 @@ def main() -> int:
     ap.add_argument("--argmin-arity", type=int, default=2,
                     help="2 = binary tournament; larger trades comparisons for depth; "
                          "set to the padded market-maker count for a single all-pairs layer")
+    ap.add_argument("--check-repeats", type=int, default=7,
+                    help="independent combinations; soundness is challenge bits "
+                         "times this, and they open in one round")
+    ap.add_argument("--input-check", action="store_true",
+                    help="emit the random linear combination that binds the "
+                         "inputs to the published commitments")
+    ap.add_argument("--trunc-pr", action="store_true",
+                    help="probabilistic truncation for comparisons")
     ap.add_argument("--edabit", action="store_true",
                     help="generate comparison bits in preprocessing")
     ap.add_argument("--is-real", type=int, default=1, choices=(0, 1),
@@ -708,6 +786,9 @@ def main() -> int:
         stop_after=args.stop_after,
         price_conditionals=args.price_conditionals,
         edabit=args.edabit,
+        trunc_pr=args.trunc_pr,
+        input_check=args.input_check,
+        check_repeats=args.check_repeats,
     )
     if not args.inputs_only:
         args.out_program.parent.mkdir(parents=True, exist_ok=True)
@@ -735,6 +816,8 @@ def main() -> int:
         # would compute on a different request than the one that was sent.
         value_bits=args.bit_length + 1,
         field_bits=args.field_bits,
+        input_check=args.input_check,
+        check_repeats=args.check_repeats,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)
     for party, values in per_party.items():

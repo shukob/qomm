@@ -149,5 +149,185 @@
       "predicted_cost": "public coefficient times secret is local, so no communication; one extra opening is one round. Rounds +1, traffic plus one field element --- that is, the default field's 19.4 MB essentially unchanged.",
       "status": "reasoned and checked arithmetically, not implemented and not measured"
     }
+  },
+  "narrower_field_and_the_check": {
+    "question": "The input check needs about 165 bits and the sigma assembly needs the group order at 253. Is the narrower field worth the loss?",
+    "prediction": {
+      "traffic_vs_default": "4x to 9x",
+      "rounds": "96 to 129",
+      "wall_vs_default": "1.4x to 1.9x",
+      "input_check_adds": "1 to 3 rounds"
+    },
+    "prime_177": "2^176 + 5493 (the next prime above 2^176), 177 bits",
+    "arms": {
+      "default_128": {
+        "rounds": 64,
+        "global_mb": 19.3694,
+        "party0_mb": 3.32798,
+        "wall_median_s": 3.634557381272316,
+        "verified": true,
+        "input_check": false,
+        "field_bits": 128
+      },
+      "prime_177": {
+        "rounds": 124,
+        "global_mb": 150.843,
+        "party0_mb": 24.1283,
+        "wall_median_s": 6.227958359289914,
+        "verified": true,
+        "input_check": false,
+        "field_bits": 177
+      },
+      "prime_177_with_check": {
+        "rounds": 125,
+        "global_mb": 150.844,
+        "party0_mb": 24.1285,
+        "wall_median_s": 6.377314500976354,
+        "verified": true,
+        "input_check": true,
+        "field_bits": 177
+      },
+      "prime_253": {
+        "rounds": 129,
+        "global_mb": 277.261,
+        "party0_mb": 44.3894,
+        "wall_median_s": 7.782518350984901,
+        "verified": true,
+        "input_check": false,
+        "field_bits": 252
+      }
+    },
+    "result": {
+      "input_check_costs": {
+        "rounds": 1,
+        "global_mb": 0.001,
+        "wall_s": 0.1494
+      },
+      "narrow_vs_group_order": {
+        "traffic": 0.544,
+        "wall": 0.8002,
+        "rounds": 0.9612
+      },
+      "note": "All four predictions landed this time, after four that did not. The input check costs exactly one round and no measurable traffic, which is what section 0.6.2 predicted before the mask was counted and the width was found. 177 bits against 253 saves 46% of the traffic and 20% of the clock at almost the same round count.",
+      "recommendation": "253. The narrower field buys 46% of traffic --- 151 MB against 277, or about 22 MB a node against 40, which a gigabit link absorbs either way --- and gives up threshold_sigma assembling, which is what makes the quote proof publicly verifiable. That proof is the system's headline claim. Trading it for traffic that the link already absorbs is the wrong way round. At 253 both bindings are available and the check still costs one round."
+    }
+  },
+  "the_check_in_the_default_field": {
+    "question": "Does the check run at 128 bits after all?",
+    "answer": "Yes. The earlier conclusion that it does not fit was about one parameter choice, not about the field. Forty-bit coefficients need 165 bits; six-bit coefficients repeated seven times need 126, and seven independent combinations open in the same round because none of them waits on another.",
+    "parameters": {
+      "challenge_bits": 6,
+      "repeats": 7,
+      "statistical_bits": 35,
+      "soundness_bits": 42,
+      "mask_bits": 81,
+      "field_bits_needed": 126
+    },
+    "arms": {
+      "default_128": {
+        "rounds": 64,
+        "global_mb": 19.3694,
+        "wall_median_s": 3.5833001118153334,
+        "verified": true,
+        "input_check": false
+      },
+      "default_128_with_check": {
+        "rounds": 65,
+        "global_mb": 19.3756,
+        "wall_median_s": 3.630761643871665,
+        "verified": true,
+        "input_check": true
+      }
+    },
+    "cost": {
+      "rounds": 1,
+      "global_mb": 0.0062,
+      "wall_s": 0.0475
+    },
+    "what_is_given_up": "The hiding of the opening, and only that. Repetition buys soundness back and dilutes the gap, so the curve peaks at about 2^-34 near two to four coefficient bits and the stack's usual 2^-40 is out of reach at 127 bits at any point on it. At the shipped six-bit-by-seven setting it is 2^-32.",
+    "tradeoff_curve": [
+      {
+        "challenge_bits": 2,
+        "statistical_bits": 39,
+        "repeats": 26,
+        "soundness_bits": 41.2,
+        "hiding_bits": 34.3,
+        "openings": 26,
+        "masks_dealt": 26
+      },
+      {
+        "challenge_bits": 3,
+        "statistical_bits": 38,
+        "repeats": 15,
+        "soundness_bits": 42.1,
+        "hiding_bits": 34.1,
+        "openings": 15,
+        "masks_dealt": 15
+      },
+      {
+        "challenge_bits": 4,
+        "statistical_bits": 37,
+        "repeats": 11,
+        "soundness_bits": 43.0,
+        "hiding_bits": 33.5,
+        "openings": 11,
+        "masks_dealt": 11
+      },
+      {
+        "challenge_bits": 6,
+        "statistical_bits": 35,
+        "repeats": 7,
+        "soundness_bits": 41.8,
+        "hiding_bits": 32.2,
+        "openings": 7,
+        "masks_dealt": 7
+      },
+      {
+        "challenge_bits": 8,
+        "statistical_bits": 33,
+        "repeats": 6,
+        "soundness_bits": 48.0,
+        "hiding_bits": 30.4,
+        "openings": 6,
+        "masks_dealt": 6
+      },
+      {
+        "challenge_bits": 10,
+        "statistical_bits": 31,
+        "repeats": 5,
+        "soundness_bits": 50.0,
+        "hiding_bits": 28.7,
+        "openings": 5,
+        "masks_dealt": 5
+      },
+      {
+        "challenge_bits": 14,
+        "statistical_bits": 27,
+        "repeats": 3,
+        "soundness_bits": 42.0,
+        "hiding_bits": 25.4,
+        "openings": 3,
+        "masks_dealt": 3
+      },
+      {
+        "challenge_bits": 20,
+        "statistical_bits": 21,
+        "repeats": 3,
+        "soundness_bits": 60.0,
+        "hiding_bits": 19.4,
+        "openings": 3,
+        "masks_dealt": 3
+      },
+      {
+        "challenge_bits": 30,
+        "statistical_bits": 11,
+        "repeats": 2,
+        "soundness_bits": 60.0,
+        "hiding_bits": 10.0,
+        "openings": 2,
+        "masks_dealt": 2
+      }
+    ],
+    "caveat": "host-a carried a load average near 64 during this run, so the wall clock is the soft number; the 128-bit baseline came out at 3.583 s against 3.626 and 3.635 in quieter runs, so the distortion is small and the round and byte counts do not depend on load at all."
   }
 }
