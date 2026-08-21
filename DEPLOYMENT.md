@@ -214,11 +214,12 @@ Two things bear on the placement decision, and the rest is in `BINDING.md`.
   Nothing about the node placement changes.
 - **Making the quote proof publicly verifiable is the expensive one.** That
   needs the MPC to run over the commitment group's order, at **2.14x the wall
-  clock and 14.3x the traffic** (`matched_field.json`). Cross-region that is
-  0.38 quotes a second at a batch of 32 against 0.75, and the binding limit
-  becomes the quote's age rather than the throughput --- 83 seconds at that
-  batch, against a staleness measurement where 96 seconds is 1.34 to 1.75 times
-  the within-block floor. **Batches of 8 to 32 are where the two meet.**
+  clock and 14.3x the traffic** (`matched_field.json`). **Cross-region it does
+  not batch**: measured at 120 ms one way, its round penalty grows from 2.02x at
+  one request to 5.07x at thirty-two, so a batch of 32 is 1,314 rounds, 1,276 MB
+  a node and a quote fifteen minutes old. Cross-region the matched field is
+  usable only un-batched, at 57 s a quote; **what runs there is the default field
+  with the check**, at 0.300 quotes a second and a 107-second quote.
 
 `BINDING.md` has the two mechanisms, what each costs, why no other group helps,
 what post-quantum costs, what a quantum network would and would not change, and

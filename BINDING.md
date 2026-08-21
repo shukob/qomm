@@ -369,28 +369,41 @@ theoretically stronger and practically remote.
 
 ## 8. What the matched field leaves cross-region
 
-Round counts do not depend on what load a machine happens to be carrying, and a
-wide-area quote is round-trip bound, so this is computed from measured rounds
-times the round trip rather than from a wall clock. **Batching does not amortise
-the rounds away**: they grow at **3.48 a quote** in the default field and
-**7.02** in the matched one.
+Measured at 120 ms one way --- Tokyo to Zurich --- with every arm verified. The
+wall clock is an **inflated upper bound**: `host-a` carried a load average near
+60 during the run. Rounds and bytes do not depend on load, and neither does the
+round-trip floor computed from them, so both columns are given and they say the
+same thing. The `Q=1` default-field figure of 26.7 s also matches
+`placement_intercontinental.json`'s 26.1 s, so the instrument agrees with itself.
 
-At 120 ms one way --- Tokyo to Zurich:
-
-| | batch | rounds | round trips | per quote | quotes/s | quote age |
+| | batch | rounds | MB a node | floor quotes/s | measured quotes/s | quote age |
 |---|---:|---:|---:|---:|---:|---:|
-| default field | 32 | 177 | 42.5 s | 1.33 s | **0.75** | 42 s |
-| **matched field** | **32** | 347 | 83.2 s | 2.60 s | **0.38** | 83 s |
-| matched field | 128 | 1021 | 245.0 s | 1.91 s | 0.52 | 245 s |
+| default field | 1 | 64 | 3 | 0.065 | 0.037 | 27 s |
+| default field | 8 | 103 | 22 | 0.324 | 0.181 | 44 s |
+| **default field** | **32** | **259** | **91** | **0.515** | **0.300** | **107 s** |
+| matched field | 1 | 129 | 40 | 0.032 | 0.017 | 57 s |
+| matched field | 8 | 399 | 323 | 0.084 | 0.033 | 245 s |
+| matched field | 32 | 1314 | **1,276** | 0.101 | **0.036** | **889 s** |
 
-**Twenty-three quotes a minute**, with a ceiling near 0.52 because the rounds
-grow with the batch. For cross-border request-for-quote in instruments that
-trade by request in the first place, that is comfortable.
+**The matched field's round penalty grows with the batch.** It is 2.02x at
+`Q=1`, 3.87x at `Q=8` and **5.07x at `Q=32`** --- rounds grow at **6.29 a quote**
+in the default field against **38.23** in the matched one.
 
-**The binding limit is age, not throughput.** A batch of 32 leaves a quote up to
-83 seconds old and a batch of 128 up to 245, against `staleness.json` where 96
-seconds is 1.34 to 1.75 times the within-block floor and 300 seconds is 1.63 to
-4.00. **Batches of 8 to 32 are where the two constraints meet.**
+**So batching pays in the default field and does not in the matched one.**
+Default: `Q=1` to `Q=32` takes 26.7 s a quote down to 3.3 s, eight times better,
+while the age goes 27 s to 107 s, four times worse. Against `staleness.json`,
+where 96 seconds is 1.34 to 1.75 times the within-block floor, that is a good
+trade. Matched: 57.5 s to 27.8 s, twice better, while the age goes 57 s to
+889 s, fifteen times worse. **A quote fifteen minutes old is not a quote.**
+
+And 8,932 MB a job is **1,276 MB a node**, which a gigabit link spends ten
+seconds a job moving.
+
+**Cross-region, the matched field is usable only un-batched** --- 57 s a quote at
+0.017 a second, which the staleness curve still tolerates. Batching it trades
+age for throughput at about seven to one. **What runs cross-region is the default
+field with the input check**: 0.300 quotes a second at a batch of 32 with a
+107-second quote, and the binding costs one round.
 
 ---
 
@@ -410,7 +423,11 @@ predictions that landed is advertising a discipline rather than reporting one.
 | 2^-40 hiding is unreachable at 127 bits; then reachable with repetitions; then unreachable | **unreachable, ceiling about 2^-34** --- said three ways before the curve was tabulated | resolved by measuring |
 | 177-bit field: 4--9x traffic, 96--129 rounds, 1.4--1.9x wall | **7.8x, 124, 1.71x** | all three landed |
 | the check adds 1 to 3 rounds | **1** | landed |
+| cross-region at a batch of 32: 347 rounds and 0.38 quotes/s, extrapolated from a 15 ms table by assuming the matched field's 2.02x holds at every batch | **1,314 rounds and 0.036 quotes/s** --- the penalty grows with the batch, 2.02x to 3.87x to 5.07x | 10x too generous |
 
-Four in a row wrong, then two right. The four were about arithmetic written down
-in this repository rather than about anything inside MP-SPDZ, which is the part
-worth remembering: **the errors were in the counting, not in the tool.**
+Four in a row wrong, then two right, then one more wrong. Every one of them was
+about arithmetic written down in this repository rather than about anything
+inside MP-SPDZ, which is the part worth remembering: **the errors were in the
+counting, not in the tool.** The last one is the sharpest example --- a ratio
+measured at one batch size, assumed to hold at every batch size, and wrong by
+ten times because the thing being extrapolated was itself growing.

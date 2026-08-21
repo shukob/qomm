@@ -18,85 +18,91 @@
     "the_one_direction_that_could": "Lattice commitments. Their security comes from dimension rather than modulus size, so a homomorphic commitment can live over a 32- or 64-bit modulus and the MPC field could shrink with it. What stops it is not the size but the shape: lattice sigma protocols need rejection sampling, so the response is not a clean linear function of the witness, and threshold_sigma's whole method --- each node computes its own piece of the response and they Lagrange-combine --- does not survive that."
   },
   "cross_region_throughput": {
-    "method": "Round counts do not depend on machine load, and a wide-area quote is round-trip bound, so the throughput is computed from measured rounds times the round trip rather than from a wall clock taken on a machine at load 60.",
-    "per_quote_rounds_128": 3.48,
-    "per_quote_rounds_matched": 7.02,
+    "superseded": "The first version of this section extrapolated from a batching table taken at 15 ms in a different configuration, assuming the matched field's round penalty stays at the 2.02x it shows at Q=1. It does not. Measured at 120 ms one way, the penalty grows with the batch --- 2.02x at Q=1, 3.87x at Q=8, 5.07x at Q=32 --- and rounds grow at 6.29 a quote in the default field against 38.23 in the matched one, where the extrapolation used 3.48 and 7.02. The old figure of 0.38 quotes a second was ten times too generous.",
     "rtt_seconds": 0.24,
-    "rows": [
-      {
-        "field": "default_field",
+    "note": "host-a carried a load average near 60 during this run, so the wall clock is an inflated upper bound. Rounds and bytes do not depend on load, and the round-trip floor computed from them does not either --- both say the same thing. The Q=1 default-field figure of 26.7 s also matches placement_intercontinental.json's 26.1 s, so the instrument agrees with itself.",
+    "arms": {
+      "d1": {
+        "field_bits": 128,
         "batch": 1,
-        "rounds": 69,
-        "round_trip_seconds": 16.6,
-        "seconds_per_quote": 16.56,
-        "quotes_per_second": 0.06,
-        "quote_age_seconds": 17
+        "rounds": 64,
+        "global_mb": 19.3694,
+        "wall_median_s": 26.693224830552936,
+        "verified": true,
+        "round_trip_floor_s": 15.4,
+        "quotes_per_second_floor": 0.065,
+        "quotes_per_second_measured": 0.037,
+        "mb_per_node": 3,
+        "quote_age_s": 27
       },
-      {
-        "field": "matched_field",
+      "d8": {
+        "field_bits": 128,
+        "batch": 8,
+        "rounds": 103,
+        "global_mb": 154.409,
+        "wall_median_s": 44.14775286591612,
+        "verified": true,
+        "round_trip_floor_s": 24.7,
+        "quotes_per_second_floor": 0.324,
+        "quotes_per_second_measured": 0.181,
+        "mb_per_node": 22,
+        "quote_age_s": 44
+      },
+      "d32": {
+        "field_bits": 128,
+        "batch": 32,
+        "rounds": 259,
+        "global_mb": 637.131,
+        "wall_median_s": 106.70243133162148,
+        "verified": true,
+        "round_trip_floor_s": 62.2,
+        "quotes_per_second_floor": 0.515,
+        "quotes_per_second_measured": 0.3,
+        "mb_per_node": 91,
+        "quote_age_s": 107
+      },
+      "m1": {
+        "field_bits": 253,
         "batch": 1,
         "rounds": 129,
-        "round_trip_seconds": 31.0,
-        "seconds_per_quote": 30.96,
-        "quotes_per_second": 0.032,
-        "quote_age_seconds": 31
+        "global_mb": 277.261,
+        "wall_median_s": 57.485495432512835,
+        "verified": true,
+        "round_trip_floor_s": 31.0,
+        "quotes_per_second_floor": 0.032,
+        "quotes_per_second_measured": 0.017,
+        "mb_per_node": 40,
+        "quote_age_s": 57
       },
-      {
-        "field": "default_field",
+      "m8": {
+        "field_bits": 253,
         "batch": 8,
-        "rounds": 93,
-        "round_trip_seconds": 22.4,
-        "seconds_per_quote": 2.8,
-        "quotes_per_second": 0.357,
-        "quote_age_seconds": 22
+        "rounds": 399,
+        "global_mb": 2261.95,
+        "wall_median_s": 244.88384349644184,
+        "verified": true,
+        "round_trip_floor_s": 95.8,
+        "quotes_per_second_floor": 0.084,
+        "quotes_per_second_measured": 0.033,
+        "mb_per_node": 323,
+        "quote_age_s": 245
       },
-      {
-        "field": "matched_field",
-        "batch": 8,
-        "rounds": 178,
-        "round_trip_seconds": 42.8,
-        "seconds_per_quote": 5.34,
-        "quotes_per_second": 0.187,
-        "quote_age_seconds": 43
-      },
-      {
-        "field": "default_field",
+      "m32": {
+        "field_bits": 253,
         "batch": 32,
-        "rounds": 177,
-        "round_trip_seconds": 42.5,
-        "seconds_per_quote": 1.33,
-        "quotes_per_second": 0.753,
-        "quote_age_seconds": 42
-      },
-      {
-        "field": "matched_field",
-        "batch": 32,
-        "rounds": 347,
-        "round_trip_seconds": 83.2,
-        "seconds_per_quote": 2.6,
-        "quotes_per_second": 0.385,
-        "quote_age_seconds": 83
-      },
-      {
-        "field": "default_field",
-        "batch": 128,
-        "rounds": 511,
-        "round_trip_seconds": 122.7,
-        "seconds_per_quote": 0.96,
-        "quotes_per_second": 1.043,
-        "quote_age_seconds": 123
-      },
-      {
-        "field": "matched_field",
-        "batch": 128,
-        "rounds": 1021,
-        "round_trip_seconds": 245.0,
-        "seconds_per_quote": 1.91,
-        "quotes_per_second": 0.522,
-        "quote_age_seconds": 245
+        "rounds": 1314,
+        "global_mb": 8932.39,
+        "wall_median_s": 888.7795059354976,
+        "verified": true,
+        "round_trip_floor_s": 315.4,
+        "quotes_per_second_floor": 0.101,
+        "quotes_per_second_measured": 0.036,
+        "mb_per_node": 1276,
+        "quote_age_s": 889
       }
-    ],
-    "finding": "The matched field roughly halves cross-region throughput: 0.38 quotes a second at a batch of 32 against 0.75, and the ceiling is about 0.52 because rounds grow with the batch rather than being amortised away. Twenty-three quotes a minute is comfortable for cross-border request-for-quote in instruments that trade by request in the first place. The limit is not throughput but age: a batch of 32 leaves a quote up to 83 seconds old and a batch of 128 up to 245, against staleness.json where 96 seconds is 1.34 to 1.75 times the within-block floor and 300 seconds is 1.63 to 4.00. Batches of 8 to 32 are where the two constraints meet."
+    },
+    "finding": "Batching pays in the default field and does not in the matched one. Default: Q=1 to Q=32 takes 26.7 s a quote to 3.3 s, eight times better, while the age goes 27 s to 107 s, four times worse --- a good trade against staleness.json, where 96 s is 1.34 to 1.75 times the within-block floor. Matched: 57.5 s to 27.8 s a quote, twice better, while the age goes 57 s to 889 s, fifteen times worse. A quote fifteen minutes old is not a quote.",
+    "conclusion": "Cross-region, the matched field is usable only un-batched, at 57 s and 0.017 quotes a second. Batching it trades staleness for throughput at about seven to one. And 8,932 MB a job is 1,276 MB a node, which a gigabit link spends ten seconds a job moving. The default field with the input check is what runs cross-region: 0.300 quotes a second at Q=32 with a 107-second quote, and the binding costs one round."
   },
   "post_quantum": {
     "what_is_already_post_quantum": "The confidential computation itself. Shamir secret sharing with an honest majority is information-theoretically secure --- there is no assumption for a quantum computer to break, so the MPC layer needs nothing.",

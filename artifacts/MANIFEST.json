@@ -1,9 +1,9 @@
 {
   "artifacts": {
     "alternatives.json": {
-      "bytes": 12372,
+      "bytes": 13561,
       "host": "host-a for the round counts, host-c for the sizes",
-      "sha256": "f499ff5d0b86752e634adf2c89ad8b0db1a85358ff91a2e4f883242ef0a279ab"
+      "sha256": "6d9bd06092b4f285a9ab8717062ab11fe9d7563b0ecfddbc4224829662bfd654"
     },
     "audit_slots.json": {
       "bytes": 13934,
@@ -208,5 +208,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "2bfe18f00280e05a09a9700967c8add65f9a9705"
+  "commit": "3e82a08a6301b587b16c65f75bbd56c596caa880"
 }
