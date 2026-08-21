@@ -36,6 +36,14 @@ The same gap sits under three modules, and it is one gap rather than three.
 
 Those are the two ways. They are sections 2 and 3.
 
+**And the mechanism is not new, which is worth saying at the top rather than
+discovering in review.** Publicly Auditable MPC (Baum, Damg{\aa}rd, Orlandi,
+SCN 2014) has input providers publish Pedersen commitments whose homomorphic
+operations mirror what the protocol does to the values, so an auditor replays
+the function on the commitments. That is the construction the quote proof
+instantiates. What is here is an application of it and the cost of running it,
+not the mechanism.
+
 ---
 
 ## 1. Why the field is what stands in the way
@@ -220,6 +228,53 @@ The narrow-field version of the check in section 3 remains the answer for a
 deployment that skips the quote proof entirely --- profile A in
 `DEPLOYMENT.md`, where latency is everything and correctness proofs are not
 produced.
+
+## 4.5 The commitment scheme as a choice, and what a different one costs
+
+`groups.py` made the *group* pluggable, which covers every discrete-logarithm
+scheme and no others. `zk/scheme.py` moves the seam up to the commitment, because
+the interesting alternative is not another group:
+
+    commit, add, scale, negate, zero, encode, equal, scalar_modulus
+
+`PedersenScheme` delegates to the curve. `VoleScheme` is a linearly homomorphic
+commitment from a VOLE correlation --- `M = K + Delta*x` over a prime field,
+where the prover holds `(x, M)` and the verifier `(K, Delta)`. Every operation is
+field arithmetic instead of a scalar multiplication.
+
+`input_check.py` is ported to the seam and runs unmodified on both, which is what
+the seam is for. Measured on `host-a`, 30 repeats:
+
+| | one `scale` | build, 166 inputs | verify, 166 inputs |
+|---|---:|---:|---:|
+| Pedersen (ed25519) | 68.1 us | 16.39 ms | 13.90 ms |
+| **VOLE** | **0.605 us** | **0.31 ms** | **0.36 ms** |
+| ratio | **113x** | **53x** | **39x** |
+
+**But they do not promise the same thing, and the interface says so.** Pedersen
+is *publicly verifiable*: a commitment is a group element anyone can hold,
+combine and check, which is what a verifier who was not present needs. The VOLE
+commitment is *designated verifier* --- only the holder of `Delta` can check an
+opening, and nothing is published.
+
+**Making it public is what VOLE-in-the-Head does** (Baum et al., CRYPTO 2023),
+for about twice the communication of the designated-verifier protocol, and
+**that transform is not implemented here**. What the table measures is the
+commitment underneath it.
+
+Why it is worth measuring anyway: VOLE-in-the-Head has **no group**, so there is
+no scalar field for the MPC to match and section 2 stops being a question at all;
+it is post-quantum from symmetric primitives, so section 6 stops being one too;
+and FAEST signatures at 5.6 to 6.6 kB are the same order as the 4,960-byte sigma
+proofs this stack already produces. `eprint 2026/337` combines it with
+publicly auditable MPC directly. **This is the direction to read next, and the
+seam is what makes trying it a substitution rather than a rewrite.**
+
+Only `input_check.py` is ported. The rest of `zk/` still takes a `Pedersen`
+directly, and porting it is a day's work that would buy no further insight until
+the VOLE-in-the-Head transform exists to port *to*.
+
+---
 
 ## 5. Would a different group be cheaper? No
 

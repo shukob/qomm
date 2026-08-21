@@ -3,15 +3,6 @@
   "group": "ed25519",
   "repeats": 30,
   "challenge_bits": 40,
-  "scalar_mult_us": {
-    "n": 200,
-    "mean": 68.64761700853705,
-    "sd": 1.8195910302890008,
-    "median": 68.02147254347801,
-    "min": 66.85778498649597,
-    "max": 78.62318307161331,
-    "rsd": 0.02650625192222937
-  },
   "width_budget": {
     "n_inputs": 166,
     "value_bits": 31,
@@ -25,142 +16,310 @@
     "group_order": "fits",
     "finding": "The check does not run in the field it was proposed to save. It needs about 164 bits against 253 for the group order, and at 253 the same widening also makes threshold_sigma assemble correctly --- so the question is whether 164 is worth it over 253, not whether the check avoids widening at all."
   },
-  "rows": [
-    {
-      "n_inputs": 16,
-      "build_ms": {
-        "n": 30,
-        "mean": 1.6801954091837008,
-        "sd": 0.010893780554434134,
-        "median": 1.6781974118202925,
-        "min": 1.6649793833494186,
-        "max": 1.7124032601714134,
-        "rsd": 0.006483639042750821
+  "schemes": {
+    "pedersen": {
+      "publicly_verifiable": true,
+      "scale_us": {
+        "n": 200,
+        "mean": 69.1702519543469,
+        "sd": 5.982903042169736,
+        "median": 68.16140376031399,
+        "min": 66.16022437810898,
+        "max": 144.44580301642418,
+        "rsd": 0.08649531949252572
       },
-      "verify_ms": {
-        "n": 30,
-        "mean": 1.4248863483468692,
-        "sd": 0.007620035635452771,
-        "median": 1.4259957242757082,
-        "min": 1.4052181504666805,
-        "max": 1.43772317096591,
-        "rsd": 0.00534781994668797
-      },
-      "accepted": true,
-      "published_bytes_incremental": {
-        "exact": 96
-      },
-      "published_bytes_standalone": {
-        "exact": 608
-      },
-      "opening_bits": {
-        "exact": 116
-      },
-      "soundness_bits": {
-        "exact": 40
-      }
+      "rows": [
+        {
+          "n_inputs": 16,
+          "build_ms": {
+            "n": 30,
+            "mean": 1.6865023722251256,
+            "sd": 0.011179233903645806,
+            "median": 1.6847020015120506,
+            "min": 1.669301651418209,
+            "max": 1.7299712635576725,
+            "rsd": 0.006628649972722083
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 1.432247009749214,
+            "sd": 0.00913770491369616,
+            "median": 1.431252807378769,
+            "min": 1.4158841222524643,
+            "max": 1.4529498293995857,
+            "rsd": 0.006379978349751395
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 608
+          },
+          "opening_bits": {
+            "exact": 116
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        },
+        {
+          "n_inputs": 64,
+          "build_ms": {
+            "n": 30,
+            "mean": 6.3885300265004235,
+            "sd": 0.012279544875635045,
+            "median": 6.387572735548019,
+            "min": 6.361526902765036,
+            "max": 6.409766152501106,
+            "rsd": 0.001922123684900588
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 5.426817449430625,
+            "sd": 0.016966909834069677,
+            "median": 5.425923503935337,
+            "min": 5.38585102185607,
+            "max": 5.461148917675018,
+            "rsd": 0.0031264935649990997
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 2144
+          },
+          "opening_bits": {
+            "exact": 118
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        },
+        {
+          "n_inputs": 166,
+          "build_ms": {
+            "n": 30,
+            "mean": 16.38811614053945,
+            "sd": 0.021597379482829842,
+            "median": 16.389736905694008,
+            "min": 16.333643812686205,
+            "max": 16.42963197082281,
+            "rsd": 0.0013178683442085322
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 13.9041759694616,
+            "sd": 0.03217265114964354,
+            "median": 13.90676642768085,
+            "min": 13.83348973467946,
+            "max": 13.96201178431511,
+            "rsd": 0.002313884060465421
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 5408
+          },
+          "opening_bits": {
+            "exact": 120
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        },
+        {
+          "n_inputs": 512,
+          "build_ms": {
+            "n": 30,
+            "mean": 50.422896755238376,
+            "sd": 0.14425671195941414,
+            "median": 50.3734122030437,
+            "min": 50.25582807138562,
+            "max": 50.91521004214883,
+            "rsd": 0.002860936622893001
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 42.77717010118067,
+            "sd": 0.3301589267984284,
+            "median": 42.68664843402803,
+            "min": 42.619248386472464,
+            "max": 44.01980107650161,
+            "rsd": 0.00771811052525225
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 16480
+          },
+          "opening_bits": {
+            "exact": 121
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        }
+      ]
     },
-    {
-      "n_inputs": 64,
-      "build_ms": {
-        "n": 30,
-        "mean": 6.383242349450787,
-        "sd": 0.016653486538114822,
-        "median": 6.381372222676873,
-        "min": 6.35308213531971,
-        "max": 6.422604899853468,
-        "rsd": 0.0026089384714568587
+    "vole": {
+      "publicly_verifiable": false,
+      "scale_us": {
+        "n": 200,
+        "mean": 0.6722984835505486,
+        "sd": 0.5645485897632713,
+        "median": 0.605359673500061,
+        "min": 0.5662441253662109,
+        "max": 8.329283446073532,
+        "rsd": 0.8397290839952105
       },
-      "verify_ms": {
-        "n": 30,
-        "mean": 5.412847936774294,
-        "sd": 0.016559007827123527,
-        "median": 5.410419078543782,
-        "min": 5.381550639867783,
-        "max": 5.445447750389576,
-        "rsd": 0.003059204326547481
-      },
-      "accepted": true,
-      "published_bytes_incremental": {
-        "exact": 96
-      },
-      "published_bytes_standalone": {
-        "exact": 2144
-      },
-      "opening_bits": {
-        "exact": 118
-      },
-      "soundness_bits": {
-        "exact": 40
-      }
-    },
-    {
-      "n_inputs": 166,
-      "build_ms": {
-        "n": 30,
-        "mean": 16.380781090507906,
-        "sd": 0.024514860628068874,
-        "median": 16.37931284494698,
-        "min": 16.33477210998535,
-        "max": 16.429496929049492,
-        "rsd": 0.0014965623734679162
-      },
-      "verify_ms": {
-        "n": 30,
-        "mean": 13.881629472598433,
-        "sd": 0.026903559201001244,
-        "median": 13.876805314794183,
-        "min": 13.834285084158182,
-        "max": 13.946215156465769,
-        "rsd": 0.0019380692485783011
-      },
-      "accepted": true,
-      "published_bytes_incremental": {
-        "exact": 96
-      },
-      "published_bytes_standalone": {
-        "exact": 5408
-      },
-      "opening_bits": {
-        "exact": 120
-      },
-      "soundness_bits": {
-        "exact": 40
-      }
-    },
-    {
-      "n_inputs": 512,
-      "build_ms": {
-        "n": 30,
-        "mean": 50.289636834835015,
-        "sd": 0.14731491055624707,
-        "median": 50.26454711332917,
-        "min": 50.10195588693023,
-        "max": 51.02025344967842,
-        "rsd": 0.002929329377344078
-      },
-      "verify_ms": {
-        "n": 30,
-        "mean": 42.58153857663274,
-        "sd": 0.04171922255580153,
-        "median": 42.57666110061109,
-        "min": 42.5018179230392,
-        "max": 42.665028013288975,
-        "rsd": 0.0009797490638042746
-      },
-      "accepted": true,
-      "published_bytes_incremental": {
-        "exact": 96
-      },
-      "published_bytes_standalone": {
-        "exact": 16480
-      },
-      "opening_bits": {
-        "exact": 121
-      },
-      "soundness_bits": {
-        "exact": 40
-      }
+      "rows": [
+        {
+          "n_inputs": 16,
+          "build_ms": {
+            "n": 30,
+            "mean": 0.041327765211462975,
+            "sd": 0.006187394376340924,
+            "median": 0.039438484236598015,
+            "min": 0.03755604848265648,
+            "max": 0.07084803655743599,
+            "rsd": 0.14971519376094264
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 0.03951719651619593,
+            "sd": 0.001867601691851902,
+            "median": 0.03884662874042988,
+            "min": 0.038038939237594604,
+            "max": 0.0455779954791069,
+            "rsd": 0.04726048041101485
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 608
+          },
+          "opening_bits": {
+            "exact": 116
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        },
+        {
+          "n_inputs": 64,
+          "build_ms": {
+            "n": 30,
+            "mean": 0.12774018881221613,
+            "sd": 0.003496608344797859,
+            "median": 0.12609106488525867,
+            "min": 0.12385798618197441,
+            "max": 0.1356932334601879,
+            "rsd": 0.027372813343324802
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 0.14265389181673527,
+            "sd": 0.0022982817716352883,
+            "median": 0.14185835607349873,
+            "min": 0.13981014490127563,
+            "max": 0.14774873852729797,
+            "rsd": 0.016110894293636567
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 2144
+          },
+          "opening_bits": {
+            "exact": 118
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        },
+        {
+          "n_inputs": 166,
+          "build_ms": {
+            "n": 30,
+            "mean": 0.3100828578074773,
+            "sd": 0.0033157460291485534,
+            "median": 0.3094226121902466,
+            "min": 0.303629320114851,
+            "max": 0.31917309388518333,
+            "rsd": 0.010693096847060206
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 0.36115214849511784,
+            "sd": 0.003520981594849189,
+            "median": 0.36111148074269295,
+            "min": 0.35464391112327576,
+            "max": 0.36843307316303253,
+            "rsd": 0.009749302640232767
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 5408
+          },
+          "opening_bits": {
+            "exact": 120
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        },
+        {
+          "n_inputs": 512,
+          "build_ms": {
+            "n": 30,
+            "mean": 0.9251565517236789,
+            "sd": 0.016495243021621562,
+            "median": 0.9217543993145227,
+            "min": 0.9124330244958401,
+            "max": 1.0074712336063385,
+            "rsd": 0.017829677572826913
+          },
+          "verify_ms": {
+            "n": 30,
+            "mean": 1.1029424456258614,
+            "sd": 0.0057817035345134144,
+            "median": 1.1021075770258904,
+            "min": 1.091883983463049,
+            "max": 1.11855985596776,
+            "rsd": 0.005242071839236003
+          },
+          "accepted": true,
+          "published_bytes_incremental": {
+            "exact": 96
+          },
+          "published_bytes_standalone": {
+            "exact": 16480
+          },
+          "opening_bits": {
+            "exact": 121
+          },
+          "soundness_bits": {
+            "exact": 40
+          }
+        }
+      ]
     }
-  ]
+  },
+  "vole_speedup": {
+    "scale": 112.6,
+    "verify_at_166": 38.5
+  }
 }

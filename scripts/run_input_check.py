@@ -28,6 +28,7 @@ from scripts.hosts import this_host                                  # noqa: E40
 from scripts.measure import exact, render, summarise                 # noqa: E402
 from zk.commit import Pedersen                                       # noqa: E402
 from zk.groups import make_group                                     # noqa: E402
+from zk.scheme import make_scheme                                    # noqa: E402
 from zk.input_check import (CHALLENGE_BITS, WidthError, build,       # noqa: E402
                             check_width, coefficients, field_bits_needed,
                             mask_bits, opening_bits, verify)
@@ -62,18 +63,24 @@ def width_budget() -> dict:
     return out
 
 
-def calibrate(key: Pedersen, n: int = 200) -> dict:
-    """One scalar multiplication, so the rest can be read as a count of them."""
-    point, scalar = key.h, key.group.random_scalar()
+def calibrate(scheme, n: int = 200) -> dict:
+    """One `scale`, so the rest can be read as a count of them.
+
+    On Pedersen that is a scalar multiplication; on VOLE it is two field
+    multiplications. Calibrating on the operation rather than on the curve is
+    what makes the two schemes comparable at all.
+    """
+    commitment = scheme.commit(12345, scheme.random_blinding())
+    scalar = scheme.random_scalar()
     seconds = []
     for _ in range(n):
         start = time.perf_counter()
-        key.group.point_pow(point, scalar)
+        scheme.scale(commitment, scalar)
         seconds.append(time.perf_counter() - start)
     return summarise([s * 1e6 for s in seconds])
 
 
-def measure(key: Pedersen, n_inputs: int, repeats: int) -> dict:
+def measure(key, n_inputs: int, repeats: int) -> dict:
     values = [(-1) ** i * (37 * i + 5) for i in range(n_inputs)]
     blindings = [key.random_blinding() for _ in values]
     context = b"qomm:input-check:bench"
@@ -89,7 +96,7 @@ def measure(key: Pedersen, n_inputs: int, repeats: int) -> dict:
         verify_ms.append((time.perf_counter() - start) * 1e3)
         accepted = accepted and ok
 
-    point = len(key.group.encode(key.h))
+    point = len(key.encode(key.commit(1, 1)))
     scalar = 32
     return {
         "n_inputs": n_inputs,
@@ -109,30 +116,46 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "artifacts" / "input_check.json")
     ap.add_argument("--group", default="ed25519")
+    ap.add_argument("--schemes", nargs="+", default=["pedersen", "vole"],
+                    help="commitment schemes to measure, from zk/scheme.py")
     ap.add_argument("--inputs", type=int, nargs="+", default=[16, 64, 166, 512])
     ap.add_argument("--repeats", type=int, default=20)
     args = ap.parse_args()
 
-    key = Pedersen(make_group(args.group), b"qomm:input-check:v1")
     result = {"host": this_host(), "group": args.group, "repeats": args.repeats,
               "challenge_bits": CHALLENGE_BITS,
-              "scalar_mult_us": calibrate(key),
               "width_budget": width_budget(),
-              "rows": []}
-    unit = result["scalar_mult_us"]["median"]
-    print(f"scalar multiplication: {unit:.1f} us\n")
-    for n in args.inputs:
-        row = measure(key, n, args.repeats)
-        result["rows"].append(row)
-        print(f"{n:>5} inputs  build {render(row['build_ms'], 2, ' ms'):>22}  "
-              f"verify {render(row['verify_ms'], 2, ' ms'):>22}  "
-              f"= {1e3 * row['verify_ms']['median'] / unit:5.0f} scalar mults  "
-              f"accepted={row['accepted']}")
+              "schemes": {}}
+    for name in args.schemes:
+        scheme = make_scheme(name, **({"group": args.group} if name == "pedersen" else {}))
+        unit = calibrate(scheme)
+        block = {"publicly_verifiable": scheme.publicly_verifiable,
+                 "scale_us": unit, "rows": []}
+        print(f"== {name} == one scale: {unit['median']:.3f} us   "
+              f"publicly verifiable: {scheme.publicly_verifiable}")
+        for n in args.inputs:
+            row = measure(scheme, n, args.repeats)
+            block["rows"].append(row)
+            print(f"  {n:>5} inputs  build {render(row['build_ms'], 2, ' ms'):>21}  "
+                  f"verify {render(row['verify_ms'], 2, ' ms'):>21}  "
+                  f"accepted={row['accepted']}")
+        result["schemes"][name] = block
+        print()
+    ped = result["schemes"].get("pedersen"); vol = result["schemes"].get("vole")
+    if ped and vol:
+        result["vole_speedup"] = {
+            "scale": round(ped["scale_us"]["median"] / vol["scale_us"]["median"], 1),
+            "verify_at_166": round(ped["rows"][2]["verify_ms"]["median"]
+                                   / vol["rows"][2]["verify_ms"]["median"], 1)
+            if len(ped["rows"]) > 2 else None}
+        print(f"VOLE is {result['vole_speedup']['scale']}x on one scale and "
+              f"{result['vole_speedup']['verify_at_166']}x on verify at 166 inputs")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2) + "\n")
     print(f"\nwrote {args.out}")
-    return 0 if all(r["accepted"] for r in result["rows"]) else 1
+    return 0 if all(r["accepted"] for b in result["schemes"].values()
+                    for r in b["rows"]) else 1
 
 
 if __name__ == "__main__":
