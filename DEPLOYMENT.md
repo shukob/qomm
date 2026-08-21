@@ -99,9 +99,17 @@ cross-region committee is affordable. Where it is a fraction of one, it is not.
   and with the geographic independence that a metro deployment cannot have.
   Where leakage hurts most --- wide spread, thin book, large size --- it is also
   where 26 s is cheapest. **The economics and the physics point the same way.**
-- **Request-for-stream does not survive it.** A stream that can refresh only
-  every 26 s is not a stream, so continuous quoting stays regional whatever the
-  instrument.
+- **Request-for-stream survives it better than request-for-quote does**, which
+  is the opposite of what it looks like. A taker on a 26 s stream acts whenever
+  they like, on a price 13 s old on average and 26 s old at worst, and waits for
+  nothing. A taker on a 26 s request-for-quote waits 26 s and then acts on a
+  price that is 26 s old. **Same drift, and the stream removes the round trip
+  from the critical path.** The refresh rate falls; the mode does not fail.
+  What a slow stream really costs is on the maker's side --- a quote up to 26 s
+  old can be taken by someone watching a faster feed, so the maker widens by
+  about the drift, which is the same 4.8--8.6 bp. On a five-basis-point
+  instrument that roughly doubles the spread; on a fifty-basis-point one it
+  disappears.
 - **Crossing regions to settle was never round-bound anyway.** Two ledgers
   sharing no state settle through an adaptor signature and a deadline, costing
   0.06 ms of cryptography against an exposure set by the two ledgers' finality
@@ -109,6 +117,32 @@ cross-region committee is affordable. Where it is a fraction of one, it is not.
 - **A maker quoting outside its own region needs no committee spanning both.**
   Policy registration and quote computation are already separate: the rule
   crosses once, offline, where latency does not matter.
+
+### 0.4 The drift need not be paid at all
+
+The quote is affine in the reference price and the winner does not depend on it.
+`anchored = mid + spread_request(ref)` adds the same term to every maker, and no
+eligibility gate --- asset, size, expiry, active --- reads the reference, so a
+move in it shifts every cost by the same amount and cannot reorder them.
+`tests/test_reference_invariance.py` checks this rather than asserting it.
+
+So a slow committee does not have to produce a stale quote. **Run against
+whatever reference was current when the computation started, and correct the
+revealed price by how far the reference moved in the meantime.** The winner
+needs no correction; it was never wrong. The correction costs no rounds: it is
+a secret one-hot vector times public constants, which is local, and with one
+asset it is a public addition the taker can do unaided.
+
+**This is a property the design has and the implementation does not yet use.**
+`REF_TABLE` is fixed when the circuit is parameterised and an absolute price is
+revealed, so today's output really is as old as the computation. Making it
+current is a change to what is revealed, not to the circuit's cost.
+
+Two things stay genuinely stale and are worth stating. The inventory term moves
+when a maker trades rather than continuously, so it ages far more slowly than
+the mid. And `expiry` is compared against the `now_t` the run started with, so a
+policy expiring inside the window can be admitted wrongly --- evaluating expiry
+against `now_t` plus the expected latency is the fix, and it costs nothing.
 
 `REGULATION.md` section 5 takes up what each choice costs in trust, since a
 regional committee and a spread one do not defend against the same adversary.
