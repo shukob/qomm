@@ -98,6 +98,7 @@ the runners wrote them. Each carries the host it ran on as a label (`host-a`,
 
 - [`AUDIT.md`](AUDIT.md) --- what the audit machinery checks, what it catches, and what it costs
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) --- what every measurement implies for what to deploy where
+- [`BINDING.md`](BINDING.md) --- the one gap between what was computed and what was committed, the two ways to close it, and what each one costs
 - [`REGULATION.md`](REGULATION.md) --- which accounts and which statutes a live deployment touches, in Japan and in four other jurisdictions
 
 ## Depends on
