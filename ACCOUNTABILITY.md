@@ -195,6 +195,36 @@ has measured that.
 
 ---
 
+## 4.5 The prediction, and the way it split
+
+Written into `artifacts/robustness_prediction.json` and committed before the
+runner had been run once:
+
+| predicted | measured | |
+|---|---|---|
+| MP-SPDZ malicious Shamir spends 2 to 8 elements per party, most likely about 4 | **8.000 online**, **48.231 single-phase** | see below |
+| GSZ over that baseline: 0.7x to 2.8x, most likely 1.4x | **0.69x against online**, **0.11x against the total** | see below |
+| rounds flat in the batch size | flat at 3 (after the loop was fixed) | landed |
+
+**Both rows landed against the online figure and missed against the total, and
+the prediction did not say which one it meant.** Eight is the top of the
+predicted range; 0.69 is one hundredth below its floor. Against the single-phase
+number the same prediction is out by six times and by a factor of six the other
+way.
+
+So this is not a modelling error. **It is a prediction that named a quantity
+without naming its phase** --- and the phase is the thing that has now bitten
+this project three times: once with edaBits, where preprocessing measured in a
+single-phase harness came out two orders of magnitude wrong; once with the
+`-P`/`-F` compile flag; and now here, where the arithmetic was right and the
+sentence was ambiguous.
+
+**The conclusion is stronger than the prediction either way.** Robustness was
+predicted to cost about 1.4x. It saves between 1.4x and 6.4x depending on which
+phase it is compared against, and on both readings it is not a cost.
+
+---
+
 ## 5. What this changes about the position
 
 `POSITION.md` says "no accountability and no robustness" and lists both as gaps
