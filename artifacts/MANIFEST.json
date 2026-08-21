@@ -99,6 +99,11 @@
       "bytes": 21954,
       "sha256": "0c189029d1431e428326ad06aa3dd0658fdbc5eaca80b1e14377862f0a5a2e3e"
     },
+    "multiplication_cost.json": {
+      "bytes": 3883,
+      "host": "host-a",
+      "sha256": "28cd8f51c45c87874cbf6dc1fac2b3e9533a1480a96417225c5f62ebc1803356"
+    },
     "opt_delay.jsonl": {
       "bytes": 64598,
       "sha256": "675f2163f5521752f2fdc15ef9fee8c79724d31685dd2d0c08b4643890d6e761"
@@ -138,6 +143,10 @@
       "host": "host-c",
       "python": "3.13.5",
       "sha256": "1e961bd7d22d3da31cb5ba057a47791cfdcc483adf21addfca519a0ca83628bb"
+    },
+    "robustness_prediction.json": {
+      "bytes": 2473,
+      "sha256": "a7bfbb324df8f3d2bced7e054d27bde8ec907f9ee2dfdde818d26ffdeb07754d"
     },
     "rounds.json": {
       "bytes": 23981,
@@ -208,5 +217,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "f9d8542a0706db2d5fc6821dadfe58bcc1041d41"
+  "commit": "2eae5494c2aadba4edae8280ce4e5f71dab27437"
 }

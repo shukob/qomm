@@ -101,6 +101,7 @@ the runners wrote them. Each carries the host it ran on as a label (`host-a`,
 - [`BINDING.md`](BINDING.md) --- the one gap between what was computed and what was committed, the two ways to close it, and what each one costs
 - [`REGULATION.md`](REGULATION.md) --- which accounts and which statutes a live deployment touches, in Japan and in four other jurisdictions
 - [`POSITION.md`](POSITION.md) --- what is new here and what is not, stated line by line against the nearest prior work
+- [`ACCOUNTABILITY.md`](ACCOUNTABILITY.md) --- what happens when a node misbehaves: the five rungs from abort to guaranteed output delivery, and which one each mechanism here reaches
 
 ## Depends on
 
