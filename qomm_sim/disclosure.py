@@ -15,6 +15,7 @@ legal entity within the protected period.
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 import random
 from dataclasses import dataclass, field
 
@@ -23,38 +24,139 @@ class PrivacyBudgetExceeded(RuntimeError):
     pass
 
 
+def advanced_composition(epsilon_0: float, k: int, delta: float) -> float:
+    """What k releases at `epsilon_0` actually cost, allowing a small delta.
+
+    Dwork, Rothblum and Vadhan: k-fold composition of eps0-DP mechanisms is
+    (eps, delta)-DP for
+
+        eps = sqrt(2 k ln(1/delta)) * eps0 + k * eps0 * (e^{eps0} - 1)
+
+    which for small eps0 grows like sqrt(k) rather than k. Basic composition is
+    the delta = 0 case and charges k * eps0. Reporting only the basic figure is
+    not wrong, it is loose: the same noise buys more windows than the paper was
+    claiming, and a reader comparing this mechanism with one that accounts
+    properly would have been comparing against a handicap this design does not
+    actually carry.
+    """
+    if k <= 0:
+        return 0.0
+    if delta <= 0:
+        return k * epsilon_0
+    return (math.sqrt(2 * k * math.log(1 / delta)) * epsilon_0
+            + k * epsilon_0 * (math.exp(epsilon_0) - 1))
+
+
 @dataclass
 class EntityAccountant:
-    """Continual-observation budget, tracked per protected entity."""
+    """Continual-observation budget, tracked per protected entity.
+
+    Two accountings, and which one is enforced is a choice the venue has to
+    publish. `delta = 0` is basic composition and pure epsilon-DP. A positive
+    delta buys the advanced bound, which for the same noise allows more windows
+    --- and costs a delta, which is a real weakening and not a free improvement.
+    """
 
     epsilon_total: float
     spent: float = 0.0
     releases: int = 0
+    delta: float = 0.0
+
+    def _cost(self, releases: int, epsilon: float) -> float:
+        if self.delta <= 0:
+            return releases * epsilon
+        return advanced_composition(epsilon, releases, self.delta)
 
     def spend(self, epsilon: float) -> None:
-        if self.spent + epsilon > self.epsilon_total + 1e-12:
+        if not self.can_spend(epsilon):
             raise PrivacyBudgetExceeded(
-                f"budget exhausted: spent={self.spent:.3f} want={epsilon:.3f} cap={self.epsilon_total}")
-        self.spent += epsilon
+                f"budget exhausted: spent={self.spent:.3f} want={epsilon:.3f} "
+                f"cap={self.epsilon_total}")
         self.releases += 1
+        self.spent = self._cost(self.releases, epsilon)
 
     def can_spend(self, epsilon: float) -> bool:
-        return self.spent + epsilon <= self.epsilon_total + 1e-12
+        return self._cost(self.releases + 1, epsilon) <= self.epsilon_total + 1e-12
 
 
-def discrete_laplace(epsilon: float, sensitivity: float, rng: random.Random) -> int:
-    """Two-sided geometric noise with scale sensitivity/epsilon."""
+def _bernoulli_exp_minus(numerator: int, denominator: int, rng: random.Random) -> bool:
+    """A coin that lands heads with probability exp(-numerator/denominator).
+
+    Rational arithmetic and fair coins only --- no floating point anywhere. The
+    construction is Canonne, Kamath and Steinke's: for a fraction in [0, 1] the
+    sum in the exponential is walked term by term with a Bernoulli at each step,
+    and for a fraction above 1 the whole is a product of such coins.
+    """
+    if denominator <= 0 or numerator < 0:
+        raise ValueError("the exponent has to be a non-negative rational")
+    if numerator > denominator:
+        # exp(-a) = exp(-1)^floor(a) * exp(-(a - floor(a)))
+        whole, rest = divmod(numerator, denominator)
+        for _ in range(whole):
+            if not _bernoulli_exp_minus(1, 1, rng):
+                return False
+        return _bernoulli_exp_minus(rest, denominator, rng)
+    k = 1
+    while True:
+        # accept with probability (numerator/denominator)/k at step k
+        if rng.randrange(denominator * k) >= numerator:
+            break
+        k += 1
+    return k % 2 == 1
+
+
+def _geometric_exact(numerator: int, denominator: int, rng: random.Random) -> int:
+    """A geometric with ratio exp(-numerator/denominator), exactly.
+
+    Counting the failures of the coin above. Every draw is an integer
+    comparison, so the distribution is the one the proof is about rather than
+    the one a floating-point logarithm happens to produce.
+    """
+    count = 0
+    while _bernoulli_exp_minus(numerator, denominator, rng):
+        count += 1
+    return count
+
+
+# The rate is carried as an exact fraction rather than rounded onto a fixed
+# denominator. A fixed 2048 looked fine and was not: at epsilon 0.25 over a
+# sensitivity of 300 the rate rounds from 0.000833 to 0.000977, and the noise
+# came out 16% narrow --- a mechanism quietly stronger in one direction and
+# weaker in the other than the one that was proved. This bound on the
+# denominator keeps the rate within a part in a million of the real one.
+RATE_DENOMINATOR_LIMIT = 10 ** 7
+
+
+def discrete_laplace(epsilon: float, sensitivity: float, rng: random.Random,
+                     exact: bool = True) -> int:
+    """Two-sided geometric noise with scale sensitivity/epsilon.
+
+    The float version below is what this used to be, and it is the standard
+    hazard: `log1p(-u) / log(alpha)` inherits the spacing of the doubles it
+    walks through, so the sampler's low-order bits distinguish neighbouring
+    distributions in a way the ideal mechanism does not. The privacy proof is
+    about the ideal one. `exact=True` samples the ideal one, using only integer
+    comparisons and fair coins, and is the default.
+    """
     if sensitivity <= 0 or epsilon <= 0:
         raise ValueError("sensitivity and epsilon must be positive")
-    alpha = math.exp(-epsilon / sensitivity)
-    if alpha <= 0.0:
-        # scale below one quantum: the mechanism degenerates to no noise, which
-        # is the correct limit and avoids log(0) when epsilon is very large
+    if not exact:
+        alpha = math.exp(-epsilon / sensitivity)
+        if alpha <= 0.0:
+            return 0
+        def geom() -> int:
+            u = rng.random()
+            return int(math.floor(math.log1p(-u) / math.log(alpha)))
+        return geom() - geom()
+
+    rate = Fraction(epsilon / sensitivity).limit_denominator(RATE_DENOMINATOR_LIMIT)
+    if rate <= 0:
+        raise ValueError("the noise rate rounded to zero")
+    if rate >= 64:
+        # scale below one quantum, so the mechanism degenerates to no noise
         return 0
-    def geom() -> int:
-        u = rng.random()
-        return int(math.floor(math.log1p(-u) / math.log(alpha)))
-    return geom() - geom()
+    return (_geometric_exact(rate.numerator, rate.denominator, rng)
+            - _geometric_exact(rate.numerator, rate.denominator, rng))
 
 
 def debias_absolute(observed: float, scale: float) -> float:

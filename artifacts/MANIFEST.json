@@ -48,11 +48,21 @@
       "bytes": 21755,
       "sha256": "f71dd89aa38a2562cbb5ad7eec259d2e51ef9f2f96c6aa27ebce0077380d49c4"
     },
+    "dp_composition.json": {
+      "bytes": 1809,
+      "host": "host-c",
+      "sha256": "776882827b952571d19861307834516e019d3ccf96c391645a9740a495ecf511"
+    },
     "dp_effect.json": {
       "bytes": 5095,
       "host": "host-c",
       "python": "3.13.5",
       "sha256": "afc65c41f12f976a266cf0d8c87920238728123fa1de43770c4eeb684dd69e96"
+    },
+    "dp_sampler.json": {
+      "bytes": 1108,
+      "host": "host-c",
+      "sha256": "02715542d4023a28b98aa22644547f89141390af16c4b3408f8b4b1f37d221fa"
     },
     "input_path.json": {
       "bytes": 3815,
@@ -156,7 +166,12 @@
     "two_site_rfq_m16.json": {
       "bytes": 743,
       "sha256": "41490bc96d8588d8e35d570932a15f6bf72d844e01efaaed6112f9736e682ef9"
+    },
+    "two_site_servers.json": {
+      "bytes": 1234,
+      "host": "host-c",
+      "sha256": "b4a1c85eefab9e6e66347b271e6b4af7b3315dc6dacaf6a479c71ce54b014fdb"
     }
   },
-  "commit": "f7aa1b7ebddb98830e8da47ced3a2baefbaf4aeb"
+  "commit": "65c6eb37b3aca7653ac7f568504a1a850d3b5be9"
 }
