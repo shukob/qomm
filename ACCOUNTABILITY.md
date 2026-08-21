@@ -149,6 +149,85 @@ conflating them would flatter the wrong side.
 
 ---
 
+## 3.5 "Just put GSZ into SPDZ" --- three reasons that is not the move
+
+**It is not a thing that can be done, in the literal sense.** SPDZ is a
+*dishonest majority* protocol: MACs on every share, offline/online, secure
+against `n-1` corruptions. GSZ is an *honest majority* protocol: Shamir,
+information-theoretic, and its guarantees exist **because** `t < n/2`. Putting
+one inside the other is not an integration; the guarantee GSZ provides is
+unavailable at SPDZ's corruption threshold at all.
+
+The sentence that does typecheck is *"add GSZ to the MP-SPDZ framework as
+another honest-majority protocol"*, alongside `shamir-party.x` and
+`malicious-shamir-party.x`. **This stack does not use SPDZ.** It uses the Shamir
+protocols that happen to ship in the same repository.
+
+**Even stated correctly it is not a protocol plugin.** MP-SPDZ's protocol
+interface is `init_mul / prepare_mul / exchange / finalize_mul` over a fixed
+party set moving forward. GSZ needs three things that interface does not have:
+the circuit cut into **segments with checkpoints** so a failure re-runs a segment
+rather than the run; a **party set and threshold that change mid-computation** as
+parties are eliminated, which forces re-sharing of the segment's inputs; and an
+asymmetric **king with relays**. That is a change to the virtual machine, not a
+new class beside the existing ones.
+
+**And it would not deliver accountability.** GSZ's identification is towards the
+other parties. Section 4.
+
+---
+
+## 3.6 What is available without any of that: the shares are already an error-correcting code
+
+Reading `Protocols/MaliciousShamirMC.hpp` makes the current behaviour concrete.
+On an opening, each party sends its share; the receiver reconstructs from
+`t+1` of them, then reconstructs again from every longer prefix and compares:
+
+    if (check != value)
+        throw mac_fail("inconsistent Shamir secret sharing");
+
+**That is error *detection* performed on data that supports error
+*correction*.** Shamir shares of a degree-`t` secret are a Reed--Solomon
+codeword `RS[n, t+1]`. At `n = 7`, `t = 2` that is `RS[7, 3]`, minimum distance
+`5`, and the number of errors correctable is `floor((5-1)/2) = 2` --- **exactly
+`T`**. Berlekamp--Welch would return both the correct value *and* the error
+locator, which names the parties that sent wrong shares. Local computation, no
+extra rounds.
+
+**Two things stop this being a free lunch, and they are worth stating precisely
+because they are what GSZ is a paper about.**
+
+**One: the opening only collects `2t+1` shares.** `finalize_raw` does
+`shares.resize(2 * threshold + 1)` --- five of seven. `RS[5, 3]` has distance
+`3` and corrects one error, not two. Correcting `T = 2` needs all seven, which
+is `n` instead of `2t+1` shares per opening: **40% more opening traffic**, and
+that is the price, not zero.
+
+**Two: products are degree `2t` before reduction.** A degree-`4` sharing over
+seven points is `RS[7, 5]`, distance `3`, one correctable error. So the
+correction capability is `T` on ordinary values and `T-1` on unreduced products,
+and a protocol that wants robustness has to avoid ever needing the second ---
+which is what GSZ's segmenting and re-sharing machinery is for.
+
+**So the honest summary is: robust *reconstruction* at `t < n/3` is a local
+decode plus 40% on openings, and robust *computation* is GSZ and is a bigger
+job.** The first is worth doing on its own --- it removes the cheapest griefing
+attack --- and nothing in this repository has measured it.
+
+### Why a griefing abort is worse here than in generic MPC
+
+In most MPC deployments an abort is a liveness problem: retry. **In an auction it
+is an economic instrument.** A node that can abort at will, anonymously and at no
+cost, can suppress the quotes it does not like --- and a node colluding with a
+maker can suppress exactly the ones where that maker is about to be picked off.
+That converts a denial of service into a free option.
+
+**This is the application-level reason accountability matters here more than the
+generic intuition suggests**, and it is why rung 1 is a worse place to be sitting
+than "the protocol occasionally fails" makes it sound.
+
+---
+
 ## 4. Accountability is a different question and does not have a free answer
 
 Not stopping and naming the party that tried to stop you are separate
