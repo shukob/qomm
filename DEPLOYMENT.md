@@ -29,6 +29,54 @@ Seven nodes in the same jurisdiction and the same commercial orbit leave the
 T=2 assumption resting on organisational independence alone, not geography.
 That is governance, not technology, and it is an explicit trade against latency.
 
+### 0.1 Independence cannot be bought inside a committee
+
+The obvious compromise is six nodes in one metro and a seventh somewhere with a
+different legal order --- geographic independence for the price of one node.
+Measured at 120 ms one way, which is Tokyo to Zurich or Tokyo to London:
+
+| node placement | one quote | vs all near |
+|---|---:|---:|
+| all near (1 ms) | 0.517 s | --- |
+| **one far (six at 1 ms, one at 120 ms)** | **22.998 ± 0.733 s (n=3)** | **44x** |
+| one near (six at 120 ms, one at 1 ms) | 25.682 ± 1.090 s | 50x |
+| all far (120 ms) | 26.148 ± 1.209 s | 51x |
+
+**One distant node costs 86% of what moving all seven costs**, against 82% at
+15 ms (`placement.json`): the penalty for a single outlier grows with distance
+rather than shrinking. The compromise is not a compromise. Every placement here
+was verified against the plaintext answer.
+
+The round count is what does this. It is 70, flat, independent of the number of
+makers and of the number of assets, so the wall clock carries 70 x RTT of pure
+waiting on whichever link is slowest.
+
+*Prediction and miss, recorded.* 70 x 0.240 s = 16.8 s of round-trip plus about
+1.5 s of computation predicted **~18 s**, from a model validated at 15 ms to
+1.4% (predicted 2.10 s of RTT against the 2.13 s above). Measured **23.0 s**.
+The linear model **under-predicts by 28%** at eight times the distance it was
+checked at, so extrapolating it further should not be trusted either.
+
+### 0.2 What this forces: two tiers, not one committee
+
+There is no middle setting, so the topology is decided rather than chosen.
+
+- **Price discovery is regional.** A committee has to sit inside one metro, or
+  one region at most. 70 rounds cannot cross an ocean.
+- **Crossing regions is a settlement problem, not a computation problem.**
+  Settling between two ledgers is an adaptor signature and a deadline, whose
+  cryptography costs 0.06 ms and whose exposure is set by the two ledgers'
+  finality (`DEFMI.md` section 6). It is not round-bound, so it crosses freely.
+- **A market maker quoting in a region it is not in does not need a committee
+  that spans both.** Policy registration and quote computation are already
+  separate: the rule crosses the region once, offline, where latency does not
+  matter, and quotes are computed locally against it thereafter.
+
+Whether the regional committee's weaker independence is acceptable is not a
+latency question, and `REGULATION.md` section 5 takes it up: it depends on
+whether the region has a supervisor whose lawful access substitutes for what
+geographic spread would have provided.
+
 ---
 
 ## 1. Three deployment profiles

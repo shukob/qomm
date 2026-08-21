@@ -89,9 +89,15 @@ def main() -> int:
     base = next(r for r in result["rows"] if r["placement"] == "all near")
     worst = next(r for r in result["rows"] if r["placement"] == "all far")
     one = next(r for r in result["rows"] if r["placement"] == "one far")
-    spread = worst["wall_median_s"] - base["wall_median_s"]
+    # `wall_s` is a summarise() block; the median lives inside it. This read the
+    # flat key the rows used to carry, so the run measured everything and then
+    # threw it away on the last line.
+    def median(row: dict) -> float:
+        return row["wall_s"]["median"] if "median" in row["wall_s"] else row["wall_s"]["mean"]
+
+    spread = median(worst) - median(base)
     result["one_far_share_of_all_far"] = (
-        (one["wall_median_s"] - base["wall_median_s"]) / spread if spread else None)
+        (median(one) - median(base)) / spread if spread else None)
     print(f"\none distant node costs "
           f"{100 * (result['one_far_share_of_all_far'] or 0):.0f}% of moving them all")
 

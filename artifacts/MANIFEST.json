@@ -96,6 +96,11 @@
       "host": "host-a",
       "sha256": "f89ae8cb92d09cfe84b28749a78057db6d7a7bca375ed4e00d1b15ae34adadf9"
     },
+    "placement_intercontinental.json": {
+      "bytes": 2202,
+      "host": "host-a",
+      "sha256": "9e9babfc4d4cc12652ced99704b097909daf6457f564b882d0b2bfa7c4d3779f"
+    },
     "price_conditionals.json": {
       "bytes": 782,
       "sha256": "214fdca17c0ec35ade3a695e6966ac76db9a7544fa605afd168bbd387d205364"
@@ -173,5 +178,5 @@
       "sha256": "b4a1c85eefab9e6e66347b271e6b4af7b3315dc6dacaf6a479c71ce54b014fdb"
     }
   },
-  "commit": "d41e7601d4ea5715bdc4aea47d4e0ac20933906e"
+  "commit": "59b76a2d8bc521290295a71d378a0f6509414b34"
 }
