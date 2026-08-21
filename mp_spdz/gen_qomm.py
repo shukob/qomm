@@ -32,7 +32,13 @@ from qomm_transport.roles import check_field_width, split  # noqa: E402
 import sys
 from pathlib import Path
 
-FIELDS = ("asset", "mid", "half", "slope", "invcoef", "inv", "maxqty", "expiry", "active")
+# `use_ref` is the only switch a maker cannot already throw by setting a
+# coefficient to zero: `slope`, `invcoef` and `active` all admit 0, but the
+# reference price used to be added with a hard-wired coefficient of one. A
+# maker in a market with no usable reference sets it to 0 and carries the
+# whole level in `mid` instead.
+FIELDS = ("asset", "mid", "half", "slope", "invcoef", "inv", "maxqty",
+          "expiry", "active", "use_ref")
 
 def sentinel_for(bit_length: int, padded_mm: int, max_cost: int) -> int:
     """Sentinel that pushes ineligible market makers out of the tournament.
@@ -317,8 +323,12 @@ def build_program(
     w("    # layer 1: price policy (2 SIMD multiplications, depth 1)")
     w("    skew = invcoef * tile_makers(inv_vec)")
     w("    depth = slope * qty_v")
-    w("    # mid is the maker's offset from the reference for its own asset")
-    w("    anchored = mid + spread_request(ref_secret_per_request)")
+    w("    # mid is the maker's offset from the reference for its own asset,")
+    w("    # unless the maker switched the reference off, in which case mid is")
+    w("    # the level itself. One more multiplication in a layer that already")
+    w("    # has two, so the depth --- and the round count --- does not move.")
+    w("    use_ref = tile_makers(col_use_ref.get_vector())")
+    w("    anchored = mid + use_ref * spread_request(ref_secret_per_request)")
     if price_conditionals:
         w(f"    # {price_conditionals} conditional(s) on secrets in the price rule.")
         w("    # A branch on a secret is a comparison, and comparisons are what")
@@ -495,6 +505,7 @@ def build_inputs(
     audit_gates: bool = False,
     value_bits: int = 32,
     field_bits: int = 128,
+    use_ref: int = 1,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
 
@@ -544,11 +555,14 @@ def build_inputs(
                 "maxqty": rng.choice([50, 100, 200, 500]),
                 "expiry": now_t + rng.randint(1, 600),
                 "active": 1,
+                "use_ref": (use_ref[i % len(use_ref)]
+                            if isinstance(use_ref, (list, tuple))
+                            else use_ref),
             }
         else:  # padding to the next power of two
             pol = {
                 "asset": 0, "mid": 0, "half": 0, "slope": 0, "invcoef": 0,
-                "inv": 0, "maxqty": 0, "expiry": 0, "active": 0,
+                "inv": 0, "maxqty": 0, "expiry": 0, "active": 0, "use_ref": 0,
             }
         policies.append(pol)
         for f in FIELDS:
@@ -565,7 +579,7 @@ def build_inputs(
     for i, pol in enumerate(policies):
         skew = pol["invcoef"] * pol["inv"]
         depth = pol["slope"] * user_qty
-        anchor = ref_table[user_asset] + pol["mid"]
+        anchor = pol.get("use_ref", 1) * ref_table[user_asset] + pol["mid"]
         ask = anchor + pol["half"] + depth + skew
         bid = anchor - pol["half"] - depth + skew
         ok = pol["asset"] == user_asset and user_qty <= pol["maxqty"]

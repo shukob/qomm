@@ -118,7 +118,58 @@ cross-region committee is affordable. Where it is a fraction of one, it is not.
   Policy registration and quote computation are already separate: the rule
   crosses once, offline, where latency does not matter.
 
-### 0.4 The drift need not be paid at all
+### 0.4 What a maker can decline
+
+Every term in the price rule is a choice the maker makes, and all but one of
+them were already declinable by setting a coefficient to zero: `slope` switches
+off the size term, `invcoef` the inventory term, `active` the maker. The
+reference price was the exception --- it was added with a hard-wired coefficient
+of one, so a maker in a market with no usable benchmark had no way to say no,
+and a corporate bond has no continuous mid to be an offset from.
+
+`use_ref` is that missing switch: a secret bit per maker, with
+`anchored = mid + use_ref * ref`. It puts one more multiplication into a SIMD
+layer that already had two, so the depth does not move. Measured both arms in
+one session on one machine (`use_ref_cost.json`, M=16, 31 bits, 4 assets, 15 ms,
+both verified):
+
+| | rounds | party0 | global | wall |
+|---|---:|---:|---:|---:|
+| without `use_ref` | 64 | 3.320 MB | 19.319 MB | 3.632 s |
+| with `use_ref` | 64 | 3.328 MB | 19.369 MB | 3.625 s |
+
+**Rounds unchanged, traffic +0.26%, wall clock inside the noise.** *Prediction
+and miss:* rounds were predicted unchanged and are; traffic was predicted at
++1% to +3% and came in **five times cheaper**.
+
+The two settings are two markets, and `qomm_dsl/examples/` now carries one file
+for each. On the reference, `mid` is a small offset and the market level rides
+along --- which is what section 0.5 is about. Off it, `mid` carries the level
+itself, so it has to be declared wide enough to hold one, and a wider parameter
+is a wider range proof: 12 bits round up to a 16-bit proof, 18 bits to a 32-bit
+one.
+
+**There is a cheaper version of the same switch, and it is worth knowing which
+one is being bought.** Whether a market has a usable benchmark is a fact about
+the market, not about the maker, and putting the switch there costs nothing at
+all: a market with no benchmark is a **zero row in the public reference table**,
+folded into a lookup that already happens. No field, no multiplication, no
+bytes. What it gives up is that the venue decides rather than the maker.
+
+The maker-side switch buys that choice, and pays for it twice: 0.26% of traffic,
+and **the correction of section 0.5, whenever makers on one asset disagree.**
+The correction works because the reference shifts every maker's cost equally and
+so cannot reorder them --- which stops being true the moment some makers are on
+the reference and others are not. A relative maker at `ref + 30` and an absolute
+one at `100,020` swap places as the reference crosses `99,990`;
+`tests/test_reference_invariance.py` holds the case.
+
+So: **per-market is free and keeps the correction, per-maker costs 0.26% and
+keeps the correction only while an asset's makers agree.** A venue that wants
+both can take the maker-declared flag and require it to be consistent per asset
+at registration, which is a rule about admission rather than about the circuit.
+
+### 0.5 The drift need not be paid at all
 
 The quote is affine in the reference price and the winner does not depend on it.
 `anchored = mid + spread_request(ref)` adds the same term to every maker, and no
@@ -148,6 +199,53 @@ against `now_t` plus the expected latency is the fix, and it costs nothing.
 regional committee and a spread one do not defend against the same adversary.
 
 ---
+
+## 0.6 Running the MPC over the commitment's own field
+
+The largest open problem in the stack is a field boundary. A maker's policy is
+committed as a Pedersen commitment on ed25519 and shared to the nodes, and the
+node can check its own share against that commitment before it computes
+(`check_share`). What nothing forces is that the value the node then **inputs**
+to MP-SPDZ is the value it was checked. Signatures make that detectable and
+attributable afterwards; they do not prevent it.
+
+Matching the MPC field to the curve's scalar order closes it, and the mechanism
+is standard: Shamir reconstruction is a linear combination, so the nodes publish
+`g^(share)` and Lagrange-combine in the exponent to `g^v` **without opening
+`v`**, then check `g^v` against the commitment. That only works when the
+exponent arithmetic and the MPC arithmetic are the same field.
+
+Measured, both arms in one session on one machine, both verified against the
+cleartext answer (M=16, 31 bits, 4 assets, N=7):
+
+| | rounds | global traffic | wall @15 ms | wall @0 ms |
+|---|---:|---:|---:|---:|
+| MP-SPDZ `-F 128` | 64 | 19.4 MB | 3.626 s | 0.167 s |
+| ed25519 scalar field (253 bits) | **129** | **277.3 MB** | **7.486 s** | **0.419 s** |
+| ratio | **2.02x** | **14.3x** | **2.06x** | **2.50x** |
+
+*Prediction and miss, twice.* Rounds were predicted **unchanged** and doubled ---
+an arbitrary prime does not get the comparison machinery that the default field
+has. Traffic was predicted at **about 2x**, from field elements going 16 B to
+32 B, and came in at **14x**: the element size is only doubled, so the rest is
+that comparisons over a general prime need far more shared bits.
+
+**What the numbers say is that the price is round count and arithmetic width,
+not transfer.** Fourteen times the bytes buys only two to two and a half times
+the wall clock, and the ratio is *worse* at zero delay than at 15 ms, which is
+the opposite of a bandwidth-bound cost.
+
+Two things before treating 2x as the price of closing the gap. The seven parties
+share one machine here and the delay proxy models latency but **not bandwidth**,
+so 277 MB per quote --- about 40 MB per node, a third of a second on a gigabit
+link and three seconds on a hundred-megabit one --- is a cost the measurement
+does not show. And the 2x is paid **on every gate of every quote, forever**,
+where the binding it buys is needed only when a value **enters** the system. A
+policy is dealt once and priced against many times, so a per-input argument that
+leaves the evaluation field alone would be paid at the dealing rate measured in
+`maker_updates.json` (40 to 352 updates a second with commitments) rather than
+on every quote. **Which of the two is cheaper depends on quotes per policy
+update, and that ratio is a property of the market rather than of the protocol.**
 
 ## 1. Three deployment profiles
 

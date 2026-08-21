@@ -26,7 +26,8 @@ QUOTE = (ROOT / "qomm_dsl" / "examples" / "quote.rule").read_text()
 UPDATE = (ROOT / "qomm_dsl" / "examples" / "update.rule").read_text()
 
 BINDINGS = dict(mid=-6, half=14, slope=2, invcoef=1, maxqty=400, expiry=1_600,
-                active=1, inv=-320, qty=100, ref_mid=100_000, now=1_000)
+                active=1, use_ref=1, inv=-320, qty=100, ref_mid=100_000,
+                now=1_000)
 
 
 @pytest.fixture(scope="module")
@@ -100,8 +101,8 @@ def test_obligations_are_derived_not_written():
     assert plan["total"] == len(rule.obligations)
     # adding a term to the rule adds its obligation automatically
     richer = compile_rule(QUOTE.replace(
-        "ask      = ref_mid + mid + half + slope * qty + invcoef * inv",
-        "ask      = ref_mid + mid + half + slope * qty + invcoef * inv + slope * inv"))
+        "ask      = use_ref * ref_mid + mid + half + slope * qty + invcoef * inv",
+        "ask      = use_ref * ref_mid + mid + half + slope * qty + invcoef * inv + slope * inv"))
     assert obligation_plan(richer)["counts"]["product"] > plan["counts"]["product"]
 
 

@@ -1,0 +1,66 @@
+{
+  "host": "host-a",
+  "question": "what it costs to run the MPC over the same field the commitments use",
+  "why": "A value committed as a Pedersen commitment on ed25519 cannot be checked inside an MPC that works over a different prime, so today a node that inputs something other than what it was dealt is detected and attributed afterwards rather than prevented. Matching the MPC field to the curve's scalar order turns that binding into a distributed exponentiation: the nodes publish g^(share) and Lagrange-combine to g^v without opening v, and g^v is checked against the commitment. The question is the price.",
+  "prediction": {
+    "rounds": "unchanged",
+    "bytes": "about 2x, field elements 16 B to 32 B",
+    "wall_15ms": "4.8 to 6.5 s"
+  },
+  "config": {
+    "n_mm": 16,
+    "n_parties": 7,
+    "bit_length": 31,
+    "n_assets": 4,
+    "repeats": 3,
+    "protocol": "malicious-shamir-party.x",
+    "default_field": "MP-SPDZ -F 128",
+    "matched_field": "-P 2^252 + 27742317777372353535851937790883648493 (the ed25519 / ristretto255 group order)"
+  },
+  "arms": {
+    "default_15ms": {
+      "rounds": 64,
+      "party0_mb": 3.32798,
+      "global_mb": 19.3694,
+      "wall_median_s": 3.626332306303084,
+      "compile_s": 0.2574537768959999,
+      "verified": true,
+      "prime": null
+    },
+    "ell_15ms": {
+      "rounds": 129,
+      "party0_mb": 44.3894,
+      "global_mb": 277.261,
+      "wall_median_s": 7.485718729905784,
+      "compile_s": 1.5530576570890844,
+      "verified": true,
+      "prime": "7237005577332262213973186563042994240857116359379907606001950938285454250989"
+    },
+    "default_0ms": {
+      "rounds": 64,
+      "party0_mb": 3.32798,
+      "global_mb": 19.3694,
+      "wall_median_s": 0.1672539720311761,
+      "compile_s": 0.2472535320557654,
+      "verified": true,
+      "prime": null
+    },
+    "ell_0ms": {
+      "rounds": 129,
+      "party0_mb": 44.3894,
+      "global_mb": 277.261,
+      "wall_median_s": 0.41877795988693833,
+      "compile_s": 1.5572943752631545,
+      "verified": true,
+      "prime": "7237005577332262213973186563042994240857116359379907606001950938285454250989"
+    }
+  },
+  "result": {
+    "rounds_ratio": 2.015625,
+    "global_bytes_ratio": 14.314382479581198,
+    "wall_ratio_15ms": 2.0642671706877316,
+    "wall_ratio_0ms": 2.503844631019455,
+    "note": "Rounds were predicted unchanged and doubled. Bytes were predicted at about 2x and came in at 13x, so the prediction was roughly seven times too cheap. Wall clock is 2.06x at 15 ms and 2.50x at 0 ms --- the byte increase does not show up as time in proportion, because what the matched field costs is round count and arithmetic width rather than transfer. Both arms verified against the cleartext answer.",
+    "caveat": "the seven parties share one machine and the delay is a loopback proxy, so bandwidth is not modelled. 277 MB of global traffic per quote is about 40 MB per node, which a gigabit link absorbs in a third of a second and a hundred-megabit link does not. On a real wide area link the 15 ms figure is a lower bound."
+  }
+}

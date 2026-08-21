@@ -130,14 +130,15 @@ The pricing rule is restricted to a small notation with a limited instruction se
 ```
 # the price rule a market maker registers, and nothing else.
 # mid is an offset from the reference price of whichever asset was asked for,
-# so the same rule serves every market the circuit covers.
+# so the same rule serves every market the circuit covers. A maker in a market
+# with no usable reference sets use_ref to 0 instead --- see quote_absolute.rule.
 param mid[-2000,2000], half[1,200], slope[0,16], invcoef[0,8], maxqty[1,1000]
-param expiry[0,1000000], active[0,1]
+param expiry[0,1000000], active[0,1], use_ref[1,1]
 state inv[-4000,4000]
 input qty[1,400], ref_mid[90000,110000], now[0,1000000]
 
-ask      = ref_mid + mid + half + slope * qty + invcoef * inv
-bid      = ref_mid + mid - half - slope * qty + invcoef * inv
+ask      = use_ref * ref_mid + mid + half + slope * qty + invcoef * inv
+bid      = use_ref * ref_mid + mid - half - slope * qty + invcoef * inv
 eligible = (qty <= maxqty) and (expiry > now) and (active == 1)
 ```
 
@@ -162,8 +163,8 @@ One walk of the same tree produces the value and the proof together. There is no
 | kind of proof | count |
 |---|---:|
 | bit | 3 |
-| product | 10 |
-| range | 10 |
+| product | 12 |
+| range | 11 |
 
 Measured on Ed25519: building the audit **28.9 ms**, verifying **32.2 ms**, output identical to cleartext evaluation. A test checks that adding a term to the rule adds the corresponding proof.
 

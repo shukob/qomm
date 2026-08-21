@@ -36,8 +36,10 @@ def test_the_approved_rule_is_accepted():
 def test_a_substituted_formula_is_detected():
     registry = RuleRegistry()
     entry = registry.approve(SOURCE, "quote")
-    swapped = SOURCE.replace("ask      = ref_mid + mid + half",
-                             "ask      = ref_mid + mid + half + half")
+    swapped = SOURCE.replace("+ mid + half", "+ mid + half + half")
+    # a replacement that matches nothing leaves the source alone, and the test
+    # then checks that an unmodified rule verifies --- which it does, silently.
+    assert swapped != SOURCE, "the tamper this test performs no longer applies"
     ok, reason = registry.check(swapped, "quote", entry.digest)
     assert not ok and "substituted" in reason
 
