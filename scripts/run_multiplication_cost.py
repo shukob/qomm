@@ -126,6 +126,9 @@ def main() -> int:
                     help="two circuit sizes; the slope between them is the answer")
     ap.add_argument("--field-bits", type=int, default=128)
     ap.add_argument("--repeats", type=int, default=3)
+    ap.add_argument("--protocols", nargs="+", default=None,
+                    help="name=binary pairs, e.g. mascot=mascot-party.x. "
+                         "Default is the honest-majority pair.")
     ap.add_argument("--prime", type=int, default=None,
                     help="the modulus the preprocessing on disk was made for; "
                          "read it from Player-Data/<n>-MSpT<t>-<bits>/Params-Data")
@@ -144,17 +147,18 @@ def main() -> int:
     element_bytes = args.field_bits / 8
 
     arms = {}
-    for name, binary in (("malicious", "malicious-shamir-party.x"),
-                         ("semi_honest", "shamir-party.x")):
-        if name == "semi_honest" and not args.control:
-            continue
+    protocols = ([(n, b) for n, b in (pair.split("=", 1) for pair in args.protocols)]
+                 if args.protocols else
+                 [("malicious", "malicious-shamir-party.x")]
+                 + ([("semi_honest", "shamir-party.x")] if args.control else []))
+    for name, binary in protocols:
         rows = [one_size(args.root, n, args.parties, args.threshold,
                          args.field_bits, args.repeats, binary, PROGRAM,
                          name[:3], args.file_prep, args.prime)
                 for n in (small, large)]
         arm = {"binary": binary, "rows": rows,
                "per_multiplication": slope(rows, args.parties, args.field_bits, delta)}
-        if args.control:
+        if args.control and not args.protocols:
             control = [one_size(args.root, n, args.parties, args.threshold,
                                 args.field_bits, args.repeats, binary, CONTROL,
                                 name[:3] + "c", args.file_prep, args.prime)
@@ -189,8 +193,9 @@ def main() -> int:
                                 "broadcast channel has to be assumed"),
         },
     }
-    mal = arms["malicious"]
-    here = mal.get("per_multiplication_net", mal["per_multiplication"])["per_party_elements"]
+    first = next(iter(arms.values()))
+    here = first.get("per_multiplication_net",
+                     first["per_multiplication"])["per_party_elements"]
     result["comparison"]["measured_here"] = here
     result["comparison"]["god_over_this_baseline"] = (
         round(5.5 / here, 2) if here else None)

@@ -304,6 +304,103 @@ phase it is compared against, and on both readings it is not a cost.
 
 ---
 
+## 4.6 What if there were no honest majority at all?
+
+The rungs above take the corruption model as given. The other move is to change
+it: drop the assumption that five of seven nodes are honest and use a protocol
+that survives `n-1` corruptions instead. That is **strictly stronger** --- at
+`n = 7` it withstands six colluding nodes where this design breaks at three ---
+so the only question is the price.
+
+Measured with the same slope harness, `host-a`, 128-bit field
+(`artifacts/dishonest_majority.json`). The harness cross-checks: 48.235 elements
+per party at the quote circuit's 3,312 multiplications predicts **17.9 MB**
+global, against **19.37 MB** measured end to end in `matched_field.json`, the
+difference being the input sharing and the 70 openings.
+
+| | elements per party per multiplication |
+|---|---:|
+| Shamir malicious, `n=7 T=2`, **online only** | 8.000 |
+| **MASCOT, `n=7`, online only** | **3.429** |
+| Shamir malicious, `n=7 T=2`, **total** | 48.235 |
+| semi-honest dishonest majority, `n=7`, total | 3,849 |
+| **MASCOT, `n=7`, total** | **26,894** |
+| MASCOT, `n=3`, total | 8,969 |
+| MASCOT, `n=2`, total | 4,487 |
+
+**The answer splits in two and the halves point opposite ways.**
+
+**Online, dishonest majority is 2.3x cheaper.** MASCOT spends 3.429 elements per
+party against Shamir's 8.000. The reason is structural rather than incidental:
+reconstructing a Shamir sharing collects `2t+1 = 5` shares, while opening an
+additive sharing is one round trip through a designated party whatever `n` is.
+**The honest majority's entire advantage is in preprocessing, and at seven
+parties its online phase is the worse of the two.**
+
+**In total, dishonest majority is 558x more expensive**, because triples stop
+coming from information-theoretic tricks and start needing pairwise oblivious
+transfer. The scaling is exactly linear in the number of partners --- `4,486.6 x
+(n-1)` per party, which reproduces at `n = 2, 3, 7` to three digits --- so the
+global cost is quadratic in `n`, which is why nobody runs seven.
+
+**And giving up malicious security does not recover it.** Semi-honest dishonest
+majority is still 3,849 elements per party, 80x honest-majority Shamir. **The
+cost is the corruption model, not the adversary model.**
+
+### The number a deployment would actually care about
+
+Preprocessing is input-independent, so an RFQ venue can make triples between
+quotes. That turns the comparison from latency into a throughput ceiling. Per
+quote at `M = 16` (3,312 multiplications), fully pipelined, with a dedicated
+gigabit link per party:
+
+| | per party, per quote | ceiling |
+|---|---:|---:|
+| Shamir `n=7`, total | 2.56 MB | **one quote per 0.02 s** |
+| MASCOT `n=2`, total | 238 MB | one quote per 1.9 s |
+| MASCOT `n=7`, total | 1.43 GB | one quote per 11.4 s |
+
+**This design is nowhere near its bandwidth ceiling**, which is why
+`DEPLOYMENT.md` finds it limited by round trips --- 3.6 s at 15 ms and 23.0 s
+intercontinental. A dishonest-majority venue would be limited by bandwidth
+instead, and at seven parties by a wide margin.
+
+### The two things this actually costs, which are not bandwidth
+
+**Robustness stops being expensive and becomes impossible.** One corrupt party
+of `n` can always stall, so guaranteed output delivery is unavailable at any
+price. Everything in section 3 --- the finding that robustness here is a saving
+--- would be closed off permanently.
+
+**And nobody would deploy seven.** The point of a dishonest-majority protocol is
+that one honest party of two suffices, so the honest comparison is not
+seven-party Shamir against seven-party MASCOT; it is **seven-party Shamir against
+two-party MASCOT**, which is roughly Prime Match's shape. That is a governance
+decision rather than a performance one: seven KYB'd entities across
+jurisdictions is a consortium, two operators is a venue, and DeFMI's regional
+node structure is built on the first.
+
+Even so, two-party MASCOT moves **475 MB of global traffic per quote against
+17.9 MB** --- 27x, with two nodes instead of seven.
+
+### The prediction, and how it split
+
+| predicted | measured | |
+|---|---|---|
+| MASCOT online at `n=7`: 12 to 20 elements per party | **3.429** | **wrong, and in the opposite direction** |
+| MASCOT total at `n=7`: 30x to 300x, likely 100x | **558x** | wrong, 1.9x above the range |
+| semi-honest dishonest majority still well above Shamir | 80x | landed |
+
+**The online miss is the instructive one.** The arithmetic said "an opening
+means every party sends to every other, so `2(n-1) = 12` elements". That is what
+*Shamir* does here, not what SPDZ does --- SPDZ opens through a designated party
+and pays `O(1)` per party regardless of `n`. **The mistake was assuming the
+protocol we run is the efficient one on the axis being compared.** It is the
+same shape as the earlier finding that MP-SPDZ's malicious Shamir is 6x off the
+state of the art for its own regime.
+
+---
+
 ## 5. What this changes about the position
 
 `POSITION.md` says "no accountability and no robustness" and lists both as gaps

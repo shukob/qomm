@@ -49,6 +49,15 @@
       "host": "host-a",
       "sha256": "0a5d5d778f4e74cf5291ea2a71b77d7c4a9d708670550c3cd00d880f00e0bedc"
     },
+    "dishonest_majority.json": {
+      "bytes": 4162,
+      "host": "host-a",
+      "sha256": "e8ab8db3a804c743b3247e079bed002bbec984b8d4e376006b7d8150e9f6cc23"
+    },
+    "dishonest_majority_prediction.json": {
+      "bytes": 3723,
+      "sha256": "88ca92f9defc9e0932e1efa6864b5de08e457fec7b424490f993af019fc5d6b3"
+    },
     "dp_audit.json": {
       "bytes": 21755,
       "sha256": "f71dd89aa38a2562cbb5ad7eec259d2e51ef9f2f96c6aa27ebce0077380d49c4"
@@ -83,6 +92,10 @@
       "bytes": 8584,
       "host": "host-a",
       "sha256": "a7eacba2920ff2b16184df4ff60645a866b97df2aef005a99bf10c9c3cf99c4a"
+    },
+    "malicious_node_prediction.json": {
+      "bytes": 3591,
+      "sha256": "7de313a78d141c1fe8e0aa26c6c12a2cd75b5632a1dddafda3cde5d6340fc092"
     },
     "matched_field.json": {
       "bytes": 2711,
@@ -217,5 +230,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "5faae234b28416cbc073862f3b9cfc5008104a97"
+  "commit": "b770b74550fb8714e55f2ea059481d33e194b634"
 }

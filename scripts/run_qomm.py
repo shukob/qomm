@@ -82,6 +82,9 @@ class MPSpdzRun:
                  binary: str = "malicious-shamir-party.x"):
         self.root = root
         self.binary = binary
+        # Only the Shamir binaries take a threshold. A dishonest-majority
+        # protocol has one by definition --- n-1 --- and rejects the flag.
+        self.pass_threshold = "shamir" in binary
         self.extra_args: list[str] = []
         self.program = program
         self.n_parties = n_parties
@@ -202,7 +205,8 @@ class MPSpdzRun:
                 logs.append(log)
                 procs.append(subprocess.Popen(
                     [f"./{self.binary}", str(party), self.program,
-                     "-N", str(n), "-T", str(self.threshold),
+                     "-N", str(n),
+                     *(["-T", str(self.threshold)] if self.pass_threshold else []),
                      *self.extra_args,
                      "-ip", str(self.run_dir / f"hosts-P{party}")],
                     cwd=self.root, stdout=log, stderr=subprocess.STDOUT,
