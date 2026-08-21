@@ -155,6 +155,11 @@
       "host": "host-a",
       "sha256": "047c8d15435c4c56de1b5f012641427cae3a0ea8033a4050c6fddda9facfb3ea"
     },
+    "staleness.json": {
+      "bytes": 3109,
+      "host": "host-b",
+      "sha256": "4d9ac4bba735db2bfdcfeff1074c0a2eb34c26e879a44e4c653679445c3814da"
+    },
     "three_times.json": {
       "bytes": 2641,
       "host": "host-a",
@@ -178,5 +183,5 @@
       "sha256": "b4a1c85eefab9e6e66347b271e6b4af7b3315dc6dacaf6a479c71ce54b014fdb"
     }
   },
-  "commit": "59b76a2d8bc521290295a71d378a0f6509414b34"
+  "commit": "94572136598c7cf53814a719af611aec307a8feb"
 }

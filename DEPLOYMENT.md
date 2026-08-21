@@ -57,25 +57,61 @@ waiting on whichever link is slowest.
 The linear model **under-predicts by 28%** at eight times the distance it was
 checked at, so extrapolating it further should not be trusted either.
 
-### 0.2 What this forces: two tiers, not one committee
+### 0.2 What 26 s is worth, which is not the same as how long it is
 
-There is no middle setting, so the topology is decided rather than chosen.
+The table above says a globally spread committee is fifty times slower. It does
+not say that matters, and the number that decides it is not the delay but
+**whether the price moved during it.**
 
-- **Price discovery is regional.** A committee has to sit inside one metro, or
-  one region at most. 70 rounds cannot cross an ocean.
-- **Crossing regions is a settlement problem, not a computation problem.**
-  Settling between two ledgers is an adaptor signature and a deadline, whose
-  cryptography costs 0.06 ms and whose exposure is set by the two ledgers'
-  finality (`DEFMI.md` section 6). It is not round-bound, so it crosses freely.
-- **A market maker quoting in a region it is not in does not need a committee
-  that spans both.** Policy registration and quote computation are already
-  separate: the rule crosses the region once, offline, where latency does not
-  matter, and quotes are computed locally against it thereafter.
+UniswapX fills carry a rate that really was executable at a block, so the drift
+across a gap can be set against the dispersion the same market shows *within*
+one block --- spread, size impact, fee tier, all the ways the price is not a
+single number even at an instant. Ethereum blocks are about 12 s, so one
+cross-region quote is two of them (`staleness.json`, four busiest pairs):
 
-Whether the regional committee's weaker independence is acceptable is not a
-latency question, and `REGULATION.md` section 5 takes it up: it depends on
-whether the region has a supervisor whose lawful access substitutes for what
-geographic spread would have provided.
+| gap | drift | vs the within-block floor |
+|---|---:|---:|
+| within one block | 4.8--7.5 bp | --- |
+| **2 blocks, ~26 s: one cross-region quote** | 3.6--8.6 bp | **1.01x** (median) |
+| 8 blocks, ~96 s | 7.4--9.4 bp | 1.34--1.75x |
+| 25 blocks, ~300 s | 12.2--19.2 bp | 1.63--4.00x |
+
+**Twenty-six seconds of drift is the same size as the price uncertainty the
+market already has inside a single block.** A quote that took 26 s to compute is
+not distinguishable from an instantaneous one, because the price was never that
+precisely defined. And this is crypto on Ethereum L1 --- the harshest case
+available. An instrument that moves less makes a slow quote cheaper, never
+dearer, so this bounds the bond and derivative cases from above rather than
+describing them.
+
+Caveats, because the measurement has them: these are executed rates, so a filler
+chose the moment; most blocks carry one fill, so the within-block series is 60
+to 247 observations per pair; and the floor mixes spread with size impact rather
+than being a quoted bid-ask.
+
+**So the criterion is `drift(latency)` against the instrument's own price
+uncertainty, and not the latency.** Where the spread is basis points, a
+cross-region committee is affordable. Where it is a fraction of one, it is not.
+
+### 0.3 What follows: the tier is per instrument
+
+- **A committee spanning regions is available for request-for-quote**, at 26 s
+  and with the geographic independence that a metro deployment cannot have.
+  Where leakage hurts most --- wide spread, thin book, large size --- it is also
+  where 26 s is cheapest. **The economics and the physics point the same way.**
+- **Request-for-stream does not survive it.** A stream that can refresh only
+  every 26 s is not a stream, so continuous quoting stays regional whatever the
+  instrument.
+- **Crossing regions to settle was never round-bound anyway.** Two ledgers
+  sharing no state settle through an adaptor signature and a deadline, costing
+  0.06 ms of cryptography against an exposure set by the two ledgers' finality
+  (`DEFMI.md` section 6).
+- **A maker quoting outside its own region needs no committee spanning both.**
+  Policy registration and quote computation are already separate: the rule
+  crosses once, offline, where latency does not matter.
+
+`REGULATION.md` section 5 takes up what each choice costs in trust, since a
+regional committee and a spread one do not defend against the same adversary.
 
 ---
 
