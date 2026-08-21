@@ -33,6 +33,11 @@ That check belongs with the resharing step and is not in this file.
 from __future__ import annotations
 
 import secrets
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey, Ed25519PublicKey,
+)
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -73,15 +78,31 @@ def check_field_width(n_nodes: int, value_bits: int, field_bits: int) -> None:
             f"or lower the slack, and say which in the artifact.")
 
 
+def dealt_body(dealer: str, index: int, position: int, share: int) -> bytes:
+    """What a dealer signs over one share.
+
+    Names the dealer, the node it is for and where in the input stream it sits,
+    so a signature cannot be moved to another node, another position, or another
+    slot's stream.
+    """
+    return (b"QOMM:TRANSPORT:SHARE:v1"
+            + len(dealer).to_bytes(4, "big") + dealer.encode()
+            + index.to_bytes(4, "big")
+            + position.to_bytes(8, "big")
+            + share.to_bytes(64, "big", signed=True))
+
+
 @dataclass
 class ComputingNode:
     """One of N. It receives shares and never sees a value they came from."""
 
     index: int
     inputs: list[int] = field(default_factory=list)
+    receipts: list[bytes] = field(default_factory=list)
 
-    def receive(self, share: int) -> None:
+    def receive(self, share: int, receipt: bytes = b"") -> None:
         self.inputs.append(share)
+        self.receipts.append(receipt)
 
 
 @dataclass
@@ -91,15 +112,55 @@ class InputParty:
     name: str
     n_nodes: int
     value_bits: int
+    signing_key: Ed25519PrivateKey | None = None
+
+    @property
+    def verifying_key(self) -> Ed25519PublicKey | None:
+        return self.signing_key.public_key() if self.signing_key else None
 
     def deal(self, values: Iterable[int], nodes: list[ComputingNode], rng=None) -> None:
-        """Hand each node its share of every value, in the order the program reads them."""
+        """Hand each node its share of every value, in the order the program reads them.
+
+        Each share is signed when the dealer has a key. That does not *prevent*
+        a node inputting something other than what it was dealt --- these shares
+        are additive and a node that lies shifts the sum, and stopping that needs
+        an input-consistency check inside the protocol, which is not here. What
+        the signature buys is the same thing the slot receipts buy elsewhere: the
+        dealt value is fixed and signed, so a node that put in a different one
+        can be shown to have done it. Detection and attribution, not prevention,
+        and the difference is worth stating rather than blurring.
+        """
         if len(nodes) != self.n_nodes:
             raise ValueError("dealing to a different number of nodes than declared")
         for value in values:
             for node, share in zip(nodes, split(value, self.n_nodes,
                                                 self.value_bits, rng)):
-                node.receive(share)
+                position = len(node.inputs)
+                receipt = b""
+                if self.signing_key is not None:
+                    receipt = self.signing_key.sign(
+                        dealt_body(self.name, node.index, position, share))
+                node.receive(share, receipt)
+
+
+def audit_node(node: ComputingNode, dealer: str, verifying_key: Ed25519PublicKey,
+               claimed: list[int]) -> list[int]:
+    """Which of a node's claimed inputs are not the ones it was dealt.
+
+    Run after the fact, by anyone holding the dealer's public key and the
+    node's input file. Returns the positions that do not check out.
+    """
+    wrong: list[int] = []
+    for position, value in enumerate(claimed):
+        if position >= len(node.receipts) or not node.receipts[position]:
+            wrong.append(position)
+            continue
+        try:
+            verifying_key.verify(node.receipts[position],
+                                 dealt_body(dealer, node.index, position, value))
+        except InvalidSignature:
+            wrong.append(position)
+    return wrong
 
 
 class Trader(InputParty):

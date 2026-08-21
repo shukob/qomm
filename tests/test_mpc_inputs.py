@@ -113,3 +113,72 @@ def test_a_field_too_narrow_for_the_shares_is_refused():
     check_field_width(N_PARTIES, 32, 128)
     with pytest.raises(ValueError, match="cannot hold"):
         check_field_width(N_PARTIES, 32, 64)
+
+
+# --- a node that inputs something other than what it was dealt --------------
+#
+# These shares are additive, so a node that lies about its share shifts the sum
+# and the circuit computes on a request nobody sent. Stopping that needs an
+# input-consistency check inside the protocol and there is not one here. What
+# there is, is the same thing the slot receipts give elsewhere: the dealt value
+# is signed, so a node that put in a different one can be shown to have done it.
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (               # noqa: E402
+    Ed25519PrivateKey,
+)
+
+from qomm_transport.roles import (                                            # noqa: E402
+    ComputingNode, InputParty, audit_node, dealt_body,
+)
+
+
+def _dealt(values=(100, 1, 0)):
+    signing = Ed25519PrivateKey.generate()
+    nodes = [ComputingNode(i) for i in range(N_PARTIES)]
+    party = InputParty("trader", N_PARTIES, 32, signing_key=signing)
+    party.deal(values, nodes)
+    return signing, nodes, party
+
+
+def test_an_honest_node_audits_clean():
+    signing, nodes, party = _dealt()
+    for node in nodes:
+        assert audit_node(node, "trader", signing.public_key(), node.inputs) == []
+
+
+def test_a_node_that_changed_a_share_is_named():
+    signing, nodes, party = _dealt()
+    lying = list(nodes[3].inputs)
+    lying[1] += 1
+    assert audit_node(nodes[3], "trader", signing.public_key(), lying) == [1]
+
+
+def test_a_share_cannot_be_moved_to_another_node_or_position():
+    signing, nodes, party = _dealt()
+    # node 3 tries to pass off node 4's share, receipt and all
+    borrowed = ComputingNode(3, list(nodes[4].inputs), list(nodes[4].receipts))
+    assert audit_node(borrowed, "trader", signing.public_key(), borrowed.inputs), (
+        "a share signed for one node passed as another's")
+
+    reordered = ComputingNode(0, list(reversed(nodes[0].inputs)),
+                              list(nodes[0].receipts))
+    assert audit_node(reordered, "trader", signing.public_key(), reordered.inputs), (
+        "shares reordered in the stream still audited clean")
+
+
+def test_another_dealer_cannot_sign_for_this_one():
+    signing, nodes, party = _dealt()
+    impostor = Ed25519PrivateKey.generate()
+    forged = ComputingNode(0, list(nodes[0].inputs),
+                           [impostor.sign(dealt_body("trader", 0, i, v))
+                            for i, v in enumerate(nodes[0].inputs)])
+    assert audit_node(forged, "trader", signing.public_key(), forged.inputs) == \
+        list(range(len(forged.inputs)))
+
+
+def test_a_dealer_without_a_key_leaves_nothing_to_audit():
+    """Said out loud rather than left to be discovered: no key, no attribution."""
+    nodes = [ComputingNode(i) for i in range(N_PARTIES)]
+    InputParty("trader", N_PARTIES, 32).deal([100], nodes)
+    signing = Ed25519PrivateKey.generate()
+    assert audit_node(nodes[0], "trader", signing.public_key(), nodes[0].inputs) == [0]

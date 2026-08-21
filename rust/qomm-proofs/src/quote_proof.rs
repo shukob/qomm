@@ -146,6 +146,10 @@ pub struct MakerCommitments {
     pub fresh: RistrettoPoint,
     pub active: RistrettoPoint,
     pub ok: RistrettoPoint,
+    /// `expiry - now - 1`, which is what the freshness gate is about.
+    pub fresh_strict: RistrettoPoint,
+    /// `fits and fresh`, before `active` is folded in.
+    pub both: RistrettoPoint,
     pub cost: RistrettoPoint,
     pub gated: RistrettoPoint,
     pub shifted_cost: RistrettoPoint,
@@ -160,7 +164,11 @@ pub struct MakerProof {
     pub eligibility: RangeProof,
     pub eligibility_commitments: Vec<CompressedRistretto>,
     pub active_bit: BitProof,
-    pub ok_bit: BitProof,
+    /// The two `>= 0` tests, each a bit pinned to its difference.
+    pub fits_gate: Gate,
+    pub fresh_gate: Gate,
+    /// `fits and fresh`, then `that and active`.
+    pub conjunction: (ProductProof, ProductProof),
     pub commitments: MakerCommitments,
 }
 
@@ -194,10 +202,29 @@ pub struct Public {
     pub slot: u64,
 }
 
+/// One `>= 0` test: the bit, what proves it, and the value the range covers.
+#[derive(Debug)]
+pub struct Gate {
+    pub holds: bool,
+    pub blinding: Scalar,
+    pub commitment: RistrettoPoint,
+    pub bit_proof: BitProof,
+    pub product: ProductProof,
+    pub product_commitment: RistrettoPoint,
+    pub witness: i64,
+    pub witness_blinding: Scalar,
+    pub witness_commitment: RistrettoPoint,
+}
+
 pub struct QuoteCircuit {
     pub key: Pedersen,
     eligibility_bits: usize,
     span_bits: usize,
+}
+
+/// The narrowest width bulletproofs accepts that still holds `bits`.
+fn bp_width(bits: usize) -> usize {
+    [8usize, 16, 32, 64].into_iter().find(|w| *w >= bits).unwrap_or(64)
 }
 
 fn scalar(value: i64) -> Scalar {
@@ -237,6 +264,76 @@ impl QuoteCircuit {
             eligibility_bits,
             span_bits,
         }
+    }
+
+    /// A bit that is 1 exactly when the committed value is non-negative,
+    /// together with the derived value a range proof has to cover.
+    ///
+    /// One product for `bit * value`, and `t = 2P - S + B - g`, which is
+    /// non-negative when the bit is right and negative when it is not. Total in
+    /// both directions, so an ineligible maker is representable rather than
+    /// something the prover has to leave out.
+    /// A byte context for the gate's own transcripts, distinct per maker and
+    /// per test.
+    fn gate_context(context: &[u8], index: usize, what: &[u8]) -> Vec<u8> {
+        let mut out = context.to_vec();
+        out.extend_from_slice(b":mm:");
+        out.extend_from_slice(&(index as u64).to_be_bytes());
+        out.extend_from_slice(b":");
+        out.extend_from_slice(what);
+        out
+    }
+
+    fn ge_zero_bit<R: RngCore + CryptoRng>(
+        &self, value: i64, blinding: &Scalar, commitment: &RistrettoPoint,
+        context: &[u8], rng: &mut R,
+    ) -> Gate {
+        let key = &self.key;
+        let holds = value >= 0;
+        let bit = Scalar::from(u64::from(holds));
+        let r_bit = Scalar::random(rng);
+        let c_bit = key.commit(&bit, &r_bit);
+        let mut t = Transcript::new(b"qomm:quote:gate:bit");
+        t.append_message(b"ctx", context);
+        let bit_proof = prove_bit(key, &mut t, &c_bit, holds, &r_bit, rng);
+
+        let r_product = Scalar::random(rng);
+        let mut t = Transcript::new(b"qomm:quote:gate:prod");
+        t.append_message(b"ctx", context);
+        let product = prove_product(key, &mut t, &c_bit, &bit, &r_bit,
+                                    &scalar(value), blinding, &r_product, rng);
+        let product_value = if holds { value } else { 0 };
+        let c_product = key.commit(&scalar(product_value), &r_product);
+
+        let witness = 2 * product_value - value + i64::from(holds) - 1;
+        let witness_blinding = r_product + r_product - blinding + r_bit;
+        let c_witness = c_product + c_product - commitment + c_bit
+            - key.commit(&Scalar::ONE, &Scalar::ZERO);
+        Gate {
+            holds, blinding: r_bit, commitment: c_bit, bit_proof, product,
+            product_commitment: c_product, witness, witness_blinding,
+            witness_commitment: c_witness,
+        }
+    }
+
+    /// The mirror of `ge_zero_bit`: one bit, one product, and the derived value
+    /// the aggregated range proof has to be about.
+    fn check_gate(&self, base: RistrettoPoint, gate: &Gate, context: &[u8]) -> bool {
+        let key = &self.key;
+        let mut t = Transcript::new(b"qomm:quote:gate:bit");
+        t.append_message(b"ctx", context);
+        if !verify_bit(key, &mut t, &gate.commitment, &gate.bit_proof) {
+            return false;
+        }
+        let mut t = Transcript::new(b"qomm:quote:gate:prod");
+        t.append_message(b"ctx", context);
+        if !verify_product(key, &mut t, &gate.commitment, &base,
+                           &gate.product_commitment, &gate.product) {
+            return false;
+        }
+        let derived = gate.product_commitment + gate.product_commitment - base
+            + gate.commitment - key.commit(&Scalar::ONE, &Scalar::ZERO);
+        derived.compress() == gate.witness_commitment.compress()
     }
 
     fn ranges(&self, bits: usize, count: usize) -> RangeCtx {
@@ -322,30 +419,60 @@ is a policy invented now");
             let (r_maxqty, r_expiry) = (m.blindings.maxqty, m.blindings.expiry);
             let fits = m.maxqty - qty;
             let fresh = m.expiry - now;
-            if fits < 0 || fresh < 0 {
-                // An ineligible maker still takes part, but through the gate
-                // rather than through a range proof it cannot produce.
-                return Err("this prover requires eligible makers; \
-                            gate ineligible ones out before proving");
-            }
+            // Eligibility, proved in both directions and multiplied out.
+            //
+            // This used to refuse an ineligible maker outright --- a negative
+            // difference has no range proof --- so the only way to serve a
+            // request was to gate the maker out before proving, which is
+            // omission by another name and the register cannot see it. And the
+            // `ok` bit was committed with a bit proof and tied to nothing, so
+            // an *eligible* maker could be switched off for free.
             let r_fits = r_maxqty - r_qty;
-            let ranges = self.ranges(self.eligibility_bits, 2);
-            let mut t = Self::tag(context, index, "eligibility");
-            let (eligibility, eligibility_commitments) =
-                ranges.prove(&mut t, &[fits as u64, fresh as u64], &[r_fits, r_expiry])?;
             let c_fits = key.commit(&scalar(fits), &r_fits);
+            // `expiry > now` is `expiry - now - 1 >= 0`, folded in here so one
+            // gadget serves both tests
             let c_fresh = key.commit(&scalar(fresh), &r_expiry);
+            let c_fresh_strict = c_fresh - key.commit(&Scalar::ONE, &Scalar::ZERO);
+
+            let fits_gate = self.ge_zero_bit(fits, &r_fits, &c_fits,
+                                             &Self::gate_context(context, index, b"fits"), rng);
+            let fresh_gate = self.ge_zero_bit(fresh - 1, &r_expiry, &c_fresh_strict,
+                                              &Self::gate_context(context, index, b"fresh"), rng);
+
+            // One aggregated range proof over the two derived values, as before
+            // The derived value needs one more bit than the margin it is about,
+            // and bulletproofs takes 8, 16, 32 or 64 --- so round up to the next
+            // width it accepts rather than asking for one it does not.
+            let ranges = self.ranges(bp_width(self.eligibility_bits + 2), 2);
+            let mut t = Self::tag(context, index, "eligibility");
+            let (eligibility, eligibility_commitments) = ranges.prove(
+                &mut t,
+                &[fits_gate.witness as u64, fresh_gate.witness as u64],
+                &[fits_gate.witness_blinding, fresh_gate.witness_blinding])?;
 
             let r_active = m.blindings.active;
             let c_active = key.commit(&Scalar::from(u64::from(m.active)), &r_active);
             let active_bit = prove_bit(key, &mut Self::tag(context, index, "active"),
                                        &c_active, m.active, &r_active, rng);
 
-            let ok = m.active && qty <= m.maxqty && m.expiry > now;
+            // ok = fits and fresh and active, as two products of proved bits,
+            // so it is a bit by construction and has no freedom left
+            let both = fits_gate.holds && fresh_gate.holds;
+            let r_both = Scalar::random(rng);
+            let c_both = key.commit(&Scalar::from(u64::from(both)), &r_both);
+            let conj_first = prove_product(
+                key, &mut Self::tag(context, index, "ok1"), &fits_gate.commitment,
+                &Scalar::from(u64::from(fits_gate.holds)), &fits_gate.blinding,
+                &Scalar::from(u64::from(fresh_gate.holds)), &fresh_gate.blinding,
+                &r_both, rng);
+
+            let ok = both && m.active;
             let r_ok = Scalar::random(rng);
             let c_ok = key.commit(&Scalar::from(u64::from(ok)), &r_ok);
-            let ok_bit = prove_bit(key, &mut Self::tag(context, index, "ok"),
-                                   &c_ok, ok, &r_ok, rng);
+            let conj_second = prove_product(
+                key, &mut Self::tag(context, index, "ok2"), &c_both,
+                &Scalar::from(u64::from(both)), &r_both,
+                &Scalar::from(u64::from(m.active)), &r_active, &r_ok, rng);
 
             let cost = if direction == 1 { -bid } else { ask };
             let r_cost = if direction == 1 { -r_bid } else { r_ask };
@@ -377,12 +504,15 @@ is a policy invented now");
             maker_proofs.push(MakerProof {
                 depth: depth_proof, skew: skew_proof, gate_cost,
                 eligibility, eligibility_commitments,
-                active_bit, ok_bit,
+                active_bit,
+                fits_gate, fresh_gate,
+                conjunction: (conj_first, conj_second),
                 commitments: MakerCommitments {
                     slope: c_slope, invcoef: c_invcoef, inv: c_inv,
                     depth: key.commit(&scalar(depth), &r_depth),
                     skew: key.commit(&scalar(skew), &r_skew),
                     fits: c_fits, fresh: c_fresh, active: c_active, ok: c_ok,
+                    fresh_strict: c_fresh_strict, both: c_both,
                     cost: c_cost, gated: c_gated, shifted_cost: c_shifted,
                 },
             });
@@ -459,14 +589,16 @@ is a policy invented now");
                                &c.invcoef, &c.inv, &c.skew, &maker.skew) {
                 return Err(Invalid::Skew(index));
             }
-            // The aggregate must cover the two margins the statement is about,
-            // and not two other numbers.
-            let expected = [c.fits.compress(), c.fresh.compress()];
+            // The aggregate must cover the two derived values the gates are
+            // about --- `2P - S + B - g` for each test --- and not the raw
+            // margins, which are no longer what is shown non-negative.
+            let expected = [maker.fits_gate.witness_commitment.compress(),
+                            maker.fresh_gate.witness_commitment.compress()];
             if maker.eligibility_commitments.len() < 2
                 || maker.eligibility_commitments[..2] != expected {
                 return Err(Invalid::Eligibility(index));
             }
-            let ranges = self.ranges(self.eligibility_bits, 2);
+            let ranges = self.ranges(bp_width(self.eligibility_bits + 2), 2);
             let mut t = Self::tag(context, index, "eligibility");
             if !ranges.verify(&mut t, &maker.eligibility, &maker.eligibility_commitments) {
                 return Err(Invalid::Eligibility(index));
@@ -475,8 +607,39 @@ is a policy invented now");
                            &c.active, &maker.active_bit) {
                 return Err(Invalid::ActiveNotABit(index));
             }
-            if !verify_bit(key, &mut Self::tag(context, index, "ok"), &c.ok, &maker.ok_bit) {
-                return Err(Invalid::OkNotABit(index));
+            // Eligibility is the conjunction, checked rather than committed.
+            // The two differences are derived here from the register, the
+            // request and the clock, because a prover that picks what it proves
+            // eligibility about picks the answer.
+            let registered = &public.registry[index];
+            let derived_fits = registered.maxqty - public.qty_commitment;
+            if derived_fits.compress() != c.fits.compress() {
+                return Err(Invalid::NotOnTheRegister(index, "fits"));
+            }
+            let derived_fresh = registered.expiry
+                - key.commit(&scalar(public.now), &Scalar::ZERO)
+                - key.commit(&Scalar::ONE, &Scalar::ZERO);
+            if derived_fresh.compress() != c.fresh_strict.compress() {
+                return Err(Invalid::NotOnTheRegister(index, "fresh"));
+            }
+            for (what, base, gate) in [
+                (b"fits".as_ref(), c.fits, &maker.fits_gate),
+                (b"fresh".as_ref(), c.fresh_strict, &maker.fresh_gate),
+            ] {
+                if !self.check_gate(base, gate,
+                                    &Self::gate_context(context, index, what)) {
+                    return Err(Invalid::Eligibility(index));
+                }
+            }
+            let (first, second) = &maker.conjunction;
+            let mut t = Self::tag(context, index, "ok1");
+            if !verify_product(key, &mut t, &maker.fits_gate.commitment,
+                               &maker.fresh_gate.commitment, &c.both, first) {
+                return Err(Invalid::Eligibility(index));
+            }
+            let mut t = Self::tag(context, index, "ok2");
+            if !verify_product(key, &mut t, &c.both, &c.active, &c.ok, second) {
+                return Err(Invalid::Eligibility(index));
             }
             if !verify_product(key, &mut Self::tag(context, index, "gate"),
                                &c.ok, &c.shifted_cost, &c.gated, &maker.gate_cost) {

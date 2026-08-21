@@ -82,11 +82,29 @@ fn the_direction_changes_who_wins() {
 }
 
 #[test]
-fn an_ineligible_maker_is_refused_rather_than_silently_priced() {
+fn an_ineligible_maker_appears_and_cannot_win() {
+    // It used to be refused outright: a negative margin has no range proof, so
+    // the only way to serve the request was to gate the maker out before
+    // proving -- omission by another name, which the register cannot see.
     let circuit = QuoteCircuit::default();
     let mut ms = makers();
     ms[0].maxqty = 10;                       // smaller than the request
-    assert!(circuit.prove(&ms, 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).is_err());
+    let (proof, public) = circuit
+        .prove(&ms, 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
+    assert_eq!(circuit.verify(&proof, &public, CTX), Ok(()));
+    assert_ne!(proof.winner_index, 0, "a maker over its size limit won");
+}
+
+/// The forgery the conjunction closes: switch off the maker that would win.
+#[test]
+fn an_eligible_maker_cannot_be_switched_off() {
+    let circuit = QuoteCircuit::default();
+    let (mut proof, public) = circuit
+        .prove(&makers(), 100, 0, 1_000, 1 << 20, 4, CTX, &mut OsRng, [0u8; 32], 0).unwrap();
+    let winner = proof.winner_index;
+    proof.maker_proofs[winner].commitments.ok =
+        circuit.key.commit(&Scalar::ZERO, &Scalar::random(&mut OsRng));
+    assert_eq!(circuit.verify(&proof, &public, CTX), Err(Invalid::Eligibility(winner)));
 }
 
 /// A maker's commitment swapped for another's is caught by the register now,
@@ -144,5 +162,8 @@ fn the_eligibility_aggregate_must_cover_the_stated_margins() {
     let key = &circuit.key;
     proof.maker_proofs[0].commitments.fits =
         key.commit(&Scalar::from(999u64), &Scalar::random(&mut OsRng));
-    assert_eq!(circuit.verify(&proof, &public, CTX), Err(Invalid::Eligibility(0)));
+    // The size test is derived from the register and the request, so a
+    // commitment the prover picked is not on the register.
+    assert_eq!(circuit.verify(&proof, &public, CTX),
+               Err(Invalid::NotOnTheRegister(0, "fits")));
 }

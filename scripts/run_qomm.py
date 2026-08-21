@@ -269,20 +269,24 @@ def unpack_key(key: int, padded_mm: int) -> tuple[int, int]:
 
 def verify(mode: str, log: str, reference: dict) -> tuple[bool, str]:
     padded = reference["padded_mm"]
+    # The circuit opens `key + mask`, which is uniform to everyone but the
+    # trader. Unmasking here is the trader's step, not the venue's: the venue
+    # never sees the winning price, which is what `reveal_to(0)` gave it.
+    mask = reference.get("mask", 0)
     if mode == "rfq":
-        m = re.search(r"^QOMM_BEST_KEY=(-?\d+)", log, re.M)
+        m = re.search(r"^QOMM_MASKED_KEY=(-?\d+)", log, re.M)
         if not m:
-            return False, "no public quote in log"
-        got = unpack_key(int(m.group(1)), padded)
+            return False, "no masked quote in log"
+        got = unpack_key(int(m.group(1)) - mask, padded)
         want = (reference["best_cost"], reference["best_mm"])
         return got == want, f"got={got} want={want}"
     if mode == "rfm":
-        a = re.search(r"^QOMM_ASK_KEY=(-?\d+)", log, re.M)
-        b = re.search(r"^QOMM_BID_KEY=(-?\d+)", log, re.M)
+        a = re.search(r"^QOMM_MASKED_ASK=(-?\d+)", log, re.M)
+        b = re.search(r"^QOMM_MASKED_BID=(-?\d+)", log, re.M)
         if not a or not b:
             return False, "no two-sided quote in log"
-        got_ask = unpack_key(int(a.group(1)), padded)
-        got_bid = unpack_key(int(b.group(1)), padded)
+        got_ask = unpack_key(int(a.group(1)) - mask, padded)
+        got_bid = unpack_key(int(b.group(1)) - mask, padded)
         want = ((reference["best_ask"], reference["best_ask_mm"]),
                 (-reference["best_bid"], reference["best_bid_mm"]))
         got = (got_ask, got_bid)

@@ -55,9 +55,9 @@
       "sha256": "afc65c41f12f976a266cf0d8c87920238728123fa1de43770c4eeb684dd69e96"
     },
     "input_path.json": {
-      "bytes": 1228,
+      "bytes": 2872,
       "host": "host-a",
-      "sha256": "fa44af36898b29a31c57c3e2e7ec42bdbb5a8c675c4fb6a31809961bedb805f2"
+      "sha256": "ea65c0fd4ec07d7e3d57a5e3345c69b90f8d6bf5fbdc701a0d0a969a519a64a1"
     },
     "mpc_resident.json": {
       "bytes": 3242,
@@ -156,5 +156,5 @@
       "sha256": "41490bc96d8588d8e35d570932a15f6bf72d844e01efaaed6112f9736e682ef9"
     }
   },
-  "commit": "ac1fc710b3ddd9ee70e0b8641c735c421470c242"
+  "commit": "1bfe4b14c6bffde669559b8d08c5ca87e05ece21"
 }

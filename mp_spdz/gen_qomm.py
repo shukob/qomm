@@ -157,6 +157,13 @@ def build_program(
     w("# stops a dummy slot from moving market-maker state.")
     w("u_is_real = secret_input()")
     w("")
+    w("# The trader's one-time mask. The answer leaves the circuit as")
+    w("# `best_key + mask` opened to everyone, which is uniform to everyone but")
+    w("# the trader, who subtracts. `reveal_to(0)` handed the winning price and")
+    w("# the winning maker to computing node 0 in the clear -- the one party")
+    w("# that is not supposed to learn the answer to a request it cannot read.")
+    w("u_mask = secret_input()")
+    w("")
     w("# ---- market-maker price policies, one column per field ----")
     for f in FIELDS:
         w(f"col_{f} = Array(M, sint)")
@@ -407,12 +414,20 @@ def build_program(
         w("wide_keys.assign(pack_key(cost, wide_idx.get_vector()))")
         w("best_key = argmin(wide_keys.get_vector(0, M), M)")
         w("for r in range(1, N_REQ):")
-        w("    argmin(wide_keys.get_vector(r * M, M), M).reveal_to(0)")
-        w("# one opened value carries both the winning price and the winning maker")
-        w("best_key.reveal_to(0)")
-        w("u_dir.reveal_to(0)")
-        if public_check:
-            w("print_ln('QOMM_BEST_KEY=%s', best_key.reveal())")
+        w("    (argmin(wide_keys.get_vector(r * M, M), M) + u_mask).reveal()")
+        w("# one opened value carries both the winning price and the winning")
+        w("# maker, under the trader's mask")
+        w("print_ln('QOMM_MASKED_KEY=%s', (best_key + u_mask).reveal())")
+        w("")
+        w("# Each node keeps its *share* of the answer, written where the joint")
+        w("# prover reads it. This is the binding the design has been missing:")
+        w("# the quote proof is assembled from shares, and until now those")
+        w("# shares were supplied to the prover separately from the ones the")
+        w("# circuit computed on, so nothing said they were the same numbers.")
+        w("# Writing them here and reading them there makes it one value")
+        w("# crossing a named interface rather than two that agree.")
+        w("sint.write_to_file([best_key])")
+
         if disclose == "threshold":
             w("pub = threshold_disclosure(ask, ok, maxqty, ref_secret)")
             w("print_ln('QOMM_DISCLOSE=%s', pub.reveal())")
@@ -424,8 +439,8 @@ def build_program(
         w("bid_cost = ok.if_else(-bid, sint(LARGE))")
         w("ask_key = argmin(pack_key(ask_cost, idx.get_vector()), M)")
         w("bid_key = argmin(pack_key(bid_cost, idx.get_vector()), M)")
-        w("ask_key.reveal_to(0)")
-        w("bid_key.reveal_to(0)")
+        w("print_ln('QOMM_MASKED_ASK=%s', (ask_key + u_mask).reveal())")
+        w("print_ln('QOMM_MASKED_BID=%s', (bid_key + u_mask).reveal())")
         if public_check:
             w("print_ln('QOMM_ASK_KEY=%s', ask_key.reveal())")
             w("print_ln('QOMM_BID_KEY=%s', bid_key.reveal())")
@@ -508,6 +523,10 @@ def build_inputs(
         for value in (user_asset, user_qty, user_dir, user_entity):
             deal(value)
     deal(int(is_real))
+    # The trader's mask. Drawn here because the fixture stands in for the
+    # trader; a deployment draws it on the trader's own machine and keeps it.
+    mask = share_rng.randrange(1 << value_bits)
+    deal(mask)
 
     policies = []
     for i in range(n_mm):
@@ -572,6 +591,9 @@ def build_inputs(
         "best_bid_mm": best_bid_mm,
         "eligible_count": sum(1 for q in quotes if q["eligible"]),
         "quotes": quotes,
+        # what the trader subtracts from the opened value. In a deployment this
+        # never leaves the trader; here the fixture stands in for it.
+        "mask": mask,
     }
     return per_party, reference
 
