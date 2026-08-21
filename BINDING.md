@@ -450,6 +450,41 @@ only computationally binding, so a quantum adversary can open a commitment to a
 value it does not hold and can **never learn the value**. What quantum takes away
 is the ability to prove, never the ability to hide.
 
+### 6.0 That last sentence was consoling, and it is only half true
+
+Losing the ability to prove is not a mild loss when the thing being proved is an
+auction, and the loss does not need a quantum computer --- it needs time.
+Rivinius, Reisert, Rausch and K{\"u}sters (IEEE S&P 2022, appendix H) put it
+directly, against exactly this construction:
+
+> a malicious actor knows a random share `[r]_i` that will be adjusted to fit
+> another party's input. They also know a commitment for this share. If they now
+> manage to produce a decommitment for the same commitment but with the
+> decommitment `[r']_i := [r]_i - c`, they could use this (undetectedly) in the
+> protocol and influence another party's input ... **In an auction, this could be
+> used to reduce other parties' bids and increase the chances of winning.**
+
+**A maker's policy commitment in this stack is not opened once and discarded.**
+It sits for the life of the policy and is opened against every quote, and the
+mechanism is an auction. So the binding assumption is not being asked to hold
+for the length of a protocol run; it is being asked to hold for as long as the
+commitment is live, against an adversary with a direct financial motive to break
+it and a quantifiable prize for doing so.
+
+**This is a better argument for the post-quantum direction than the generic one**,
+because it does not require the adversary to have a quantum computer at all ---
+only enough compute before the commitment is used. It is the reason section 4.6's
+73 ms and 45,616 bytes are worth paying attention to even though they are worse
+than Pedersen on both axes.
+
+Their own first argument against Pedersen --- that widening the field to hold a
+group order widens the BGV plaintext space with it --- **does not transfer**.
+There is no somewhat-homomorphic encryption here: honest-majority Shamir has no
+lattice preprocessing whose modulus could blow up, which is why section 2 measures
+2.00x where they tabulate something much worse. **Both numbers are right about
+different protocols**, and the corollary points the other way too: 2.00x is not
+evidence that matching the field is affordable for anybody else.
+
 ### 6.1 Three obstacles, in increasing difficulty
 
 **Size.** A sigma proof here is `4,960` bytes a step, measured
