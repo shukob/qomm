@@ -275,6 +275,27 @@ rises as `T(Q)`. At an arrival rate of lambda per second and a slot period of
 `T(Q) ~ 3.4 + 0.18Q` seconds for Q <= 32, so for a target wait `W` take the
 largest Q with `Q <= (W - 3.4)/0.18`.
 
+### 1.1 Preprocessing between slots, which applies to all three
+
+The correlated randomness a round consumes does not depend on the request. It
+depends on the shape of the circuit, and the shape is fixed and compiled once.
+So it can be generated before the request arrives, and `AUDIT.md` measures what
+that is worth: with preprocessing on disk the online phase is **16% of the
+bytes and 71% of the rounds** (malicious Shamir, 7 parties, T=2, 8 makers).
+
+Read that as bandwidth, not latency. Rounds are what a wide-area profile is
+mostly made of, and 44 rounds at a 17.4 ms round trip is still 0.77 s that
+nothing removes, because those round trips are circuit depth. Profile C is the
+one this changes most --- it is the profile whose cost is bytes over a long
+link --- and it changes Profile A least.
+
+The caveat matters as much as the number. The measurement used a trusted
+dealer to write the preprocessing, which no deployment can do; a real offline
+phase runs among the nodes and costs more than the dealer did. What is
+established is the size of the online phase, so the design question this
+settles is *whether it is worth building an offline phase* --- at a sixth of
+the bytes, yes --- and not what that phase will cost.
+
 ---
 
 ## 2. Choosing each component
@@ -505,8 +526,7 @@ deployment that uses note rails, though, exists only in Python so far.
 
 | item | state | bearing |
 |---|---|---|
-| offline/online separation | **not measured** (the bundled tool does not produce malicious-Shamir preprocessing) | if preprocessing can run between slots the online rounds could fall further. **The largest remaining unknown** |
-| a real seven-site deployment | measured to two sites (real RTT 17.4 ms, 1.66 s net) | operating and recovering seven sites is unknown |
+| a real seven-site deployment | measured to two sites (real RTT 17.4 ms, 1.66 s net) | operating and recovering seven sites is unknown. **The largest remaining unknown**, now that the offline split is measured |
 | disclosure halt rate in a thin market | unverified | if arm B always withholds in a thin market, the choice of disclosure changes |
 | reproduction on other data | unverified | the stage-3 conclusions stand on generated data |
 | the effect of replacing with Bulletproofs | **measured** (Rust, `artifacts/rust_bench.json`) | 10.5x on the package, 6.3x on verification, at the price of widths fixed to powers of two |

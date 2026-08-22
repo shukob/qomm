@@ -296,8 +296,13 @@ check that is not sound.
 `--check-mode aggregate` now returns non-zero without
 `--unsound-check-for-measurement`. The rows above are how it was measured.
 
-**What is still not done.** The same treatment has not been applied to
-`state_audit.py`, whose shares are still its own.
+**And the state audit is bound too.** `verify_chain_bound` requires every step
+to start from the commitment the input dealer published for that maker's
+inventory, so an impeccable inventory chain over a book the circuit never saw is
+refused --- with its own `ChainError` variant, kept apart from the three that
+were there because it calls for a different response. The test that would have
+caught it asserts both halves: the unbound chain verifies and the bound one does
+not.
 
 ---
 
@@ -449,17 +454,40 @@ down to 5,559 B at `q = 2^11`, for 4.2x the signing time. Getting a published
 curve back out of a harness built for a different statement is the reason to
 believe the harness.
 
-### The escape, which is arithmetic and not a measurement
+### The escape, which is smaller than it first looked
 
-Section 6.1 of the paper replaces the repetition code with a linear code: the
-correction becomes `ceil(n/k_C) * (n_C - k_C)` elements against `n_C` trees, and
-Singleton bounds the distance at `n_C - k_C + 1`. Sweeping the rate at
-`depth = 8`, the best MDS parameters are `[31, 16, 16]`, giving **10,816 B for
-15,872 hashes** --- 4.2x smaller than the repetition code for 1.9x the
-computation, and still 2.0x Pedersen's proof.
+An earlier version of this section said section 6.1 of the paper replaces the
+repetition code with a linear code, that the correction becomes
+`ceil(n/k_C) * (n_C - k_C)` elements against `n_C` trees, and that the best MDS
+parameters `[31, 16, 16]` give **10,816 B for 15,872 hashes** --- 4.2x smaller
+for 1.9x the computation. The arithmetic is right and the conclusion is not,
+because a general code is not a drop-in for the repetition code here.
 
-**This is not implemented.** It is here so that the distance between what was
-measured and what the construction can reach is a number rather than a hope.
+The paper says so in the first paragraph of section 6.1. With the repetition
+code the commitment is linearly homomorphic for messages in `F_p`; with a
+general code it is homomorphic only *across* the `k_C`-blocks, and *"linear
+operations must be applied across the vectors"*. The statement this stack
+proves is one inner product with a distinct coefficient per value, which is a
+combination **within** a block. Splitting it into `k_C` per-column checks is
+what the general code permits, and then each column is protected by a single
+entry of `Delta`: soundness falls from `|S|^-d_C` to `|S|^-1`, which at
+`depth = 8` is 2^-8. The distance stops a prover opening to a *different
+codeword*; it does not stop one lying about a per-column opening value.
+
+Recovering the within-block combination is what protocol `Pi_2D-LC` (figure 6)
+is for, and it charges: the subspace VOLE is called for `2l+2` rows rather than
+`l`, and the prover additionally opens `S = R + U*Delta'`, an `(l+1) x n_C`
+matrix. That is the *"around 2x overhead on standard VOLE-based protocols over
+large fields"* the paper's introduction states, and it was missing from the
+figure above. Counting figure 6's messages, the best parameters move to
+`[47, 32, 16]` and the proof to **18,896 B for 24,064 hashes**: still 2.4x
+smaller than the measured repetition-code proof, for 2.9x the computation, and
+3.5x Pedersen's rather than 2.0x.
+
+**Neither is implemented.** `scripts/run_voleith.py` returns both branches ---
+`code_swap_only` and `protocol_complete` --- so the distance between what was
+measured and what the construction reaches is a number, and so is the distance
+between the two ways of counting it.
 
 ### What it buys, which is real and is not speed
 

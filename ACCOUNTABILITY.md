@@ -833,16 +833,52 @@ against a baseline `run_clob_baseline.py` already measures.
 probability 1/2. Only the linear crawl from below stays free, and it needs
 `range/step` requests, which a venue can rate-limit or charge for.
 
-### The cost, and the prediction it broke
+### The cost, the prediction it broke, and the fix
 
 Predicted +2 to +8 rounds and under 0.5% traffic. **Measured +9 rounds and
 +1.68%** --- one round outside on the first and 3.4x outside on the second.
 
 One cause for both: **the tournament's comparisons run sixteen wide per layer
-and amortise, and the fill comparison is a single standalone one paying full
-depth.** The estimate priced it as though it joined the batch. Folding it into
-the last tournament layer should take most of the nine rounds back, and is not
-done.
+and amortise, and the fill comparison was a single standalone one paying full
+depth.** The estimate priced it as though it joined the batch.
+
+So it was made to join the batch. `min(a, b) <= L` is decided by `a <= L` and
+`b <= L`, and both operands exist *before* the last tournament level runs. The
+last level now compares three pairs in one layer where it compared one ---
+`(a,b)`, `(a,L)`, `(b,L)` --- and selects twice in one layer where it selected
+once:
+
+    best = (a<=b).if_else(a, b)
+    fill = (a<=b).if_else(a<=L, b<=L)
+
+Both selects read only the three comparison bits, so they share a layer, and
+the comparison the fill needed is now inside a layer that was going to run
+anyway. `gen_qomm` emits this as `argmin_fill`; the k-ary tournament gets the
+same treatment through a split-out level function.
+
+Measured on `host-c`, same configuration for all three arms, three repeats:
+
+| arm | rounds | global | traffic |
+|---|---:|---:|---:|
+| plain | 70 | 32.5137 MB | --- |
+| binding, standalone comparison | 79 (+9) | 33.0596 MB | +1.68% |
+| binding, folded into the last layer | **72 (+2)** | 33.6037 MB | +3.35% |
+
+The standalone arm reproduces the host-a table above exactly --- +9 rounds and
++1.68% --- which is the reason to believe the arm beside it. **Seven of the
+nine rounds come back.**
+
+The prediction written before the change said +1 or +2 rounds and traffic
+roughly unchanged. The rounds landed at the top of that; **the traffic did
+not**. It doubled, +1.68% to +3.35%, and the arithmetic says why: the standalone
+arm ran two comparisons in total, the folded arm runs three, and each 63-bit
+comparison at `M = 16` over seven parties costs about 0.545 MB globally ---
+0.546 measured for the first, 0.544 for the second. Depth was bought with
+width, which is this project's recurring trade rather than a surprise in it.
+
+The unfillable arm returns `(0, 0)` after the fold as it did before, so the
+seven rounds were not bought by changing what the taker learns.
+`artifacts/fill_fold.json`.
 
 ### What is not resolved
 
