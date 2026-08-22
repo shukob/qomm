@@ -87,6 +87,15 @@
       "host": "host-c",
       "sha256": "02715542d4023a28b98aa22644547f89141390af16c4b3408f8b4b1f37d221fa"
     },
+    "identity.json": {
+      "bytes": 4468,
+      "host": "host-a",
+      "sha256": "27e1c6e1382a719d0a81f5602e6a15d74230f691676ab3ce098a89dc2bf5face"
+    },
+    "identity_prediction.json": {
+      "bytes": 3342,
+      "sha256": "1900efed48ddca38aa299e634baf8d0db6f30d019e22b0c0c28421453a95500c"
+    },
     "input_check.json": {
       "bytes": 9586,
       "host": "host-a",
@@ -266,5 +275,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "b44d05b25e364088cc7fa9d40fed27091a6e44dc"
+  "commit": "404257a4b9ff1d2919828e32f722604e745bab6f"
 }

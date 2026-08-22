@@ -611,6 +611,7 @@ def build_inputs(
     use_ref: int = 1,
     input_check: bool = False,
     check_mode: str = "aggregate",
+    check_coefficients: list | None = None,
     check_repeats: int = 7,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
@@ -684,7 +685,10 @@ def build_inputs(
         # reason this needs a wider prime than the default: it is dealt like
         # every other input, so the field has to hold `n_parties` shares of it.
         n_values = n_mm * len(FIELDS) + n_requests * 4 + 2
-        check_bits = 6          # matches build_program's default coefficients
+        # the width the mask has to cover is set by the coefficients the
+        # circuit will actually multiply by, not by a constant
+        check_bits = (max(check_coefficients).bit_length()
+                      if check_coefficients else 6)
         if check_mode == "per-party":
             # One mask per node, read only from that node. This is the only
             # input here that is not split, and it is why the per-party check
@@ -803,6 +807,12 @@ def main() -> int:
     ap.add_argument("--check-repeats", type=int, default=7,
                     help="independent combinations; soundness is challenge bits "
                          "times this, and they open in one round")
+    ap.add_argument("--check-coefficients", type=Path, default=None,
+                    help="JSON list of public coefficients. The default is a "
+                         "FIXTURE and is not sound: the whole argument is that "
+                         "the coefficients come after the commitments, so a "
+                         "deployment derives them from the published "
+                         "commitments and passes them here.")
     ap.add_argument("--check-mode", choices=("aggregate", "per-party"),
                     default="aggregate",
                     help="aggregate opens one combination and detects a "
@@ -831,6 +841,8 @@ def main() -> int:
     ap.add_argument("--out-input-dir", type=Path, required=True)
     ap.add_argument("--out-reference", type=Path, required=True)
     args = ap.parse_args()
+    coefficients = (json.loads(args.check_coefficients.read_text())
+                    if args.check_coefficients else None)
 
     padded = _pow2_ceil(args.n_mm)
     # spread the reference prices apart so a wrong asset selection is obvious
@@ -872,6 +884,7 @@ def main() -> int:
         trunc_pr=args.trunc_pr,
         input_check=args.input_check,
         check_mode=args.check_mode,
+        check_coefficients=coefficients,
         check_repeats=args.check_repeats,
     )
     if not args.inputs_only:
@@ -902,6 +915,7 @@ def main() -> int:
         field_bits=args.field_bits,
         input_check=args.input_check,
         check_mode=args.check_mode,
+        check_coefficients=coefficients,
         check_repeats=args.check_repeats,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)

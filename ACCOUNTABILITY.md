@@ -391,6 +391,67 @@ openings and forgot that soundness per party has to be bought by repetition the
 same way the aggregate check buys it. The conclusion --- negligible --- survives;
 the number was ten times light.
 
+### Is the request the circuit priced the request the taker sent?
+
+The same mechanism, and it had to be run to know. `roles.Trader` and
+`roles.MarketMaker` are both `InputParty`, and the request is read through
+`secret_input()` exactly like a policy field, so the accumulator should fold it.
+*Should* is not *does*.
+
+`scripts/run_identity.py` follows one quote end to end (`artifacts/identity.json`):
+
+| | |
+|---|---|
+| honest run | verified, **nobody named** |
+| node 4 substitutes **the taker's quantity** | **named: node 4** |
+
+So the chain closes: taker and makers publish a commitment per share → the
+coefficients are derived by hashing those commitments → **the same list is
+compiled into the circuit** → the circuit opens one combination per node →
+anyone recombines the commitments and checks. A failure names a node, and the
+taker's request is bound exactly as a maker's policy is.
+
+**Running it found two defects that no amount of reading would have.**
+
+**The generator was emitting fixture coefficients.** `1 + (617*k) % 63`, with a
+comment saying a fixture stands in for the Fiat--Shamir derivation because that
+needs the commitments. The comment was honest about the substitution and
+understated what it costs: **with coefficients a node can predict, the check
+proves nothing**, because the whole soundness argument is that the coefficients
+arrive after the commitments. Until this run, the two halves of the check had
+never been asked to agree.
+
+**And a misconfigured field makes the audit accuse every node.** The first run
+compiled at MP-SPDZ's default 128 bits while the commitments live in the
+253-bit ed25519 scalar field. The openings wrapped, no party's check matched,
+and the verdict named **all seven --- on an entirely honest run**.
+
+That is the worst failure mode an accountability mechanism can have. It does not
+fail open or closed; it **convicts everybody**, and an operator reading it could
+not tell a misconfiguration from a total compromise. Matching the field is what
+`BINDING.md` already recommends at 2.00x traffic; this is a second and
+independent reason for it, and it is a sharper one, because the first was about
+what can be proved and this is about what gets wrongly asserted.
+
+### What is still not determinable
+
+Three things, and none of them is a bug.
+
+**That the maker's committed policy is one it would honour.** `policy_audit`
+shows the fields sit inside bands the venue published. It cannot show intent, and
+no cryptography can.
+
+**That the request was real.** The maker never sees it --- that is the design ---
+so it cannot tell a genuine request from probing. A venue could learn a policy by
+running synthetic requests against it, which is what `is_real` cover traffic and
+the disclosure budget exist to bound.
+
+**That every eligible maker was included.** An omission leaves no commitment in
+the statement to fail against, so no input check can see it.
+`qomm_audit/receipts.py` covers that per slot, on a different axis: a receipt
+from every node every slot, so a node that answers only when the answer suits it
+is visible in the schedule rather than in the arithmetic.
+
 **So the answer splits, and both halves now have a mechanism.** Who sent a
 malformed share: named by the engine, patch applied, 1.33x. Who lied about their
 input: named by the dealer's own commitments, built and measured at 7.4x the
