@@ -9,6 +9,15 @@
       "bytes": 13934,
       "sha256": "c839d12c4d7315701a295c0f9c1217509b3d5268be4a6259edba552ab537b48b"
     },
+    "binding_limit.json": {
+      "bytes": 3928,
+      "host": "host-a",
+      "sha256": "27fe2f75107eabd0b07b2cbf0ddb727fe4cef961dfe39d84931434b26fdfbe16"
+    },
+    "binding_limit_prediction.json": {
+      "bytes": 3987,
+      "sha256": "2a51665bb285bcfb187b587f28a9cca3891e51afa4873b96fda81d7218cd4aff"
+    },
     "clob_baseline_clean_d0.json": {
       "bytes": 1383,
       "host": "host-a",
@@ -275,5 +284,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "404257a4b9ff1d2919828e32f722604e745bab6f"
+  "commit": "6857a81f1ea121b882d3d902deda19623b125d1c"
 }

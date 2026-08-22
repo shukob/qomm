@@ -644,6 +644,82 @@ state of the art for its own regime.
 
 ---
 
+## 4.7 The taker is a party too, and probing is its version of misbehaving
+
+Everything above is about a node. A **taker** misbehaves differently: it submits
+requests it never intends to trade on and reads the price envelope for free.
+`is_real` cover traffic hides which slots are real *from the maker*; it does
+nothing about the party doing the asking.
+
+**The fix is not cryptographic, it is a market rule made enforceable by
+cryptography.** The taker commits an acceptance level `L` with the request. The
+circuit computes the winner as before, then one comparison, and returns
+`fill * key` under the trader's mask. **A quote at or inside the level is a
+trade, not an offer.**
+
+`gen_qomm --binding-limit`. Measured on `host-a`, `M = 16`, seven parties:
+
+| | rounds | global | what the taker gets |
+|---|---:|---:|---|
+| plain | 70 | 41.5443 MB | the quote, always |
+| binding, level above the quote | 79 | 42.2438 MB | `(99990, 5)` --- filled |
+| binding, level below the quote | 79 | 42.2438 MB | **`(0, 0)`** |
+
+That last row is the whole design and it is measured rather than argued: on a
+no-fill the taker removes its own mask and gets **zero**. It learns the fill bit
+and nothing else.
+
+**The fill bit is masked too**, and that is not fussiness. Revealing it in the
+clear would say which slots traded --- which is precisely what the cover traffic
+exists to hide, since a public fill bit marks every cover slot as cover.
+
+### What this buys, stated honestly
+
+**It does not stop probing.** A prober can raise `L` from below and learn *worse
+than this* each time for free, converging on the quote from underneath. What
+costs a trade is learning the market is **better** than a stated level, because
+that is a fill.
+
+**And that is exactly what a resting limit order already reveals.** Posting at
+`L` in a public book says *I will trade at L*, and not being filled says the
+market is worse. So a binding-limit RFQ leaks **no more than a central limit
+order book**, and less, because `L` is committed rather than displayed ---
+against a baseline `run_clob_baseline.py` already measures.
+
+**Bisection costs fills.** Binary search terminates on the first `q <= L`, which
+*is* a fill; against a uniform quote the first midpoint probe fills with
+probability 1/2. Only the linear crawl from below stays free, and it needs
+`range/step` requests, which a venue can rate-limit or charge for.
+
+### The cost, and the prediction it broke
+
+Predicted +2 to +8 rounds and under 0.5% traffic. **Measured +9 rounds and
++1.68%** --- one round outside on the first and 3.4x outside on the second.
+
+One cause for both: **the tournament's comparisons run sixteen wide per layer
+and amortise, and the fill comparison is a single standalone one paying full
+depth.** The estimate priced it as though it joined the batch. Folding it into
+the last tournament layer should take most of the nine rounds back, and is not
+done.
+
+### What is not resolved
+
+**Binding needs a settlement the taker cannot decline, and the quorum cannot see
+the bit it would be settling on.** The shape is that the quorum signs an
+instruction carrying a *commitment* to `fill`, and DeFMI requires a proof that
+`fill = 1` before it moves anything. Who can produce that proof, and what stops a
+taker sitting on it, is not answered here. Escrowed collateral is necessary and
+probably not sufficient.
+
+**And it costs an honest taker something real**: giving up the right to decline
+after seeing the price is giving up *last look* --- which is what makes probing
+possible, and what the FX Global Code spent years constraining. Aligned with
+where the regulation went, and still a cost: a binding level is exposed to being
+filled on a stale quote, which is what the 26-second staleness measurement is
+about.
+
+---
+
 ## 5. What this changes about the position
 
 `POSITION.md` says "no accountability and no robustness" and lists both as gaps

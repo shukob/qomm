@@ -359,6 +359,10 @@ def main() -> int:
     ap.add_argument("--n-requests", type=int, default=1)
     ap.add_argument("--public-maker-assets", action="store_true")
     ap.add_argument("--audit-gates", action="store_true")
+    ap.add_argument("--binding-limit", action="store_true",
+                    help="the taker commits an acceptance level; a quote at or "
+                         "inside it is a trade, so probing costs a fill")
+    ap.add_argument("--user-limit", type=int, default=100000)
     ap.add_argument("--check-mode", choices=("aggregate", "per-party"),
                     default="aggregate",
                     help="per-party opens one combination per node, so a failing "
@@ -401,6 +405,8 @@ def main() -> int:
         "--argmin-arity", str(args.argmin_arity),
         "--stop-after", args.stop_after,
         "--check-mode", args.check_mode,
+        "--user-limit", str(args.user_limit),
+        *(["--binding-limit"] if args.binding_limit else []),
         *(["--edabit"] if args.edabit else []),
         *(["--trunc-pr"] if args.trunc_pr else []),
         *(["--input-check"] if args.input_check else []),
@@ -434,6 +440,7 @@ def main() -> int:
         "bit_length": args.bit_length, "argmin_arity": args.argmin_arity,
         "edabit": args.edabit, "trunc_pr": args.trunc_pr,
         "input_check": args.input_check, "check_mode": args.check_mode,
+        "binding_limit": args.binding_limit,
         "field_bits": args.field_bits, "protocol": args.protocol, "is_real": args.is_real,
         "prime": str(args.prime) if args.prime else None,
         "n_assets": args.n_assets, "user_asset": args.user_asset,

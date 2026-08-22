@@ -102,6 +102,7 @@ def build_program(
     trunc_pr: bool = False,
     input_check: bool = False,
     check_mode: str = "aggregate",
+    binding_limit: bool = False,
     check_coefficients: list | None = None,
     check_repeats: int = 7,
     stop_after: str = "tournament",
@@ -222,6 +223,24 @@ def build_program(
     w("# the winning maker to computing node 0 in the clear -- the one party")
     w("# that is not supposed to learn the answer to a request it cannot read.")
     w("u_mask = secret_input()")
+    if binding_limit:
+        w("")
+        w("# ---- the taker's acceptance level, committed with the request ----")
+        w("# Today a quote is an offer: the taker reads it and decides. That is")
+        w("# what makes probing free --- ask, read, walk away, repeat. A")
+        w("# committed level turns the offer into an order: a quote at or inside")
+        w("# it IS a trade, so the only way to learn the market is better than")
+        w("# some level is to trade at it.")
+        w("#")
+        w("# What stays free is the other direction. A taker can raise the level")
+        w("# from below and learn `worse than this` each time at no cost, exactly")
+        w("# as an unfilled limit order in a public book tells you the market is")
+        w("# worse than where you posted. So this does not stop probing; it puts")
+        w("# the leak at the same place a central limit order book already has")
+        w("# it, and no further --- and `L` is committed rather than displayed,")
+        w("# so it is one step better than the book.")
+        w("u_limit = secret_input()")
+        w("fill_mask = secret_input()")
     w("")
     w("# ---- market-maker price policies, one column per field ----")
     for f in FIELDS:
@@ -530,7 +549,21 @@ def build_program(
         w("    (argmin(wide_keys.get_vector(r * M, M), M) + u_mask).reveal()")
         w("# one opened value carries both the winning price and the winning")
         w("# maker, under the trader's mask")
-        w("print_ln('QOMM_MASKED_KEY=%s', (best_key + u_mask).reveal())")
+        if binding_limit:
+            w("# The comparison is against the packed key, not the price: a key")
+            w("# is cost*WIDE + maker, so `cost <= L` is `key <= L*WIDE + WIDE-1`")
+            w("# and no unpacking is needed. WIDE is public, so the scaling is")
+            w("# local.")
+            w("limit_key = u_limit * WIDE + (WIDE - 1)")
+            w("fill = (best_key <= limit_key)")
+            w("# Both outputs go back under the trader's masks. Revealing `fill`")
+            w("# in the clear would say which slots traded, which is precisely")
+            w("# what the `is_real` cover traffic exists to hide --- a public")
+            w("# fill bit would mark every cover slot as cover.")
+            w("print_ln('QOMM_MASKED_FILL=%s', (fill + fill_mask).reveal())")
+            w("print_ln('QOMM_MASKED_KEY=%s', (fill * best_key + u_mask).reveal())")
+        else:
+            w("print_ln('QOMM_MASKED_KEY=%s', (best_key + u_mask).reveal())")
         w("")
         w("# Each node keeps its *share* of the answer, written where the joint")
         w("# prover reads it. This is the binding the design has been missing:")
@@ -611,6 +644,8 @@ def build_inputs(
     use_ref: int = 1,
     input_check: bool = False,
     check_mode: str = "aggregate",
+    binding_limit: bool = False,
+    user_limit: int = 100000,
     check_coefficients: list | None = None,
     check_repeats: int = 7,
 ) -> tuple[dict[int, list[int]], dict]:
@@ -646,6 +681,12 @@ def build_inputs(
     # trader; a deployment draws it on the trader's own machine and keeps it.
     mask = share_rng.randrange(1 << value_bits)
     deal(mask)
+    if binding_limit:
+        # The level the taker will trade at, and a second mask so the fill bit
+        # comes back to the taker alone. Both are inputs like any other, so the
+        # input check covers them and a node cannot move the taker's level.
+        deal(int(user_limit))
+        deal(share_rng.randrange(1 << value_bits))
 
     policies = []
     for i in range(n_mm):
@@ -807,6 +848,12 @@ def main() -> int:
     ap.add_argument("--check-repeats", type=int, default=7,
                     help="independent combinations; soundness is challenge bits "
                          "times this, and they open in one round")
+    ap.add_argument("--binding-limit", action="store_true",
+                    help="the taker commits an acceptance level and a quote at "
+                         "or inside it is a trade, so learning that the market "
+                         "is better than a level costs a fill")
+    ap.add_argument("--user-limit", type=int, default=100000,
+                    help="the taker's acceptance level, for the fixture")
     ap.add_argument("--check-coefficients", type=Path, default=None,
                     help="JSON list of public coefficients. The default is a "
                          "FIXTURE and is not sound: the whole argument is that "
@@ -885,6 +932,7 @@ def main() -> int:
         input_check=args.input_check,
         check_mode=args.check_mode,
         check_coefficients=coefficients,
+        binding_limit=args.binding_limit,
         check_repeats=args.check_repeats,
     )
     if not args.inputs_only:
@@ -916,6 +964,8 @@ def main() -> int:
         input_check=args.input_check,
         check_mode=args.check_mode,
         check_coefficients=coefficients,
+        binding_limit=args.binding_limit,
+        user_limit=args.user_limit,
         check_repeats=args.check_repeats,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)
