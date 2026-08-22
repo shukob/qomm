@@ -5,6 +5,11 @@
       "host": "host-a for the round counts, host-c for the sizes",
       "sha256": "6d9bd06092b4f285a9ab8717062ab11fe9d7563b0ecfddbc4224829662bfd654"
     },
+    "atlas_scaling.json": {
+      "bytes": 6036,
+      "host": "host-a",
+      "sha256": "13d40bbd21334a05dbe9f8084db49a66740dafe53ac7eb7b2eee53cb5e8096bd"
+    },
     "audit_slots.json": {
       "bytes": 13934,
       "sha256": "c839d12c4d7315701a295c0f9c1217509b3d5268be4a6259edba552ab537b48b"
@@ -219,6 +224,15 @@
       "python": "3.13.5",
       "sha256": "1e961bd7d22d3da31cb5ba057a47791cfdcc483adf21addfca519a0ca83628bb"
     },
+    "robust_atlas.json": {
+      "bytes": 5551,
+      "host": "host-a",
+      "sha256": "8014728c2cb47f2737d254ce4596e2fdddfd274d8539f408e64799fb0332f257"
+    },
+    "robust_by_decoding_prediction.json": {
+      "bytes": 6690,
+      "sha256": "b94ef4b22f1a1ce915a7edc8dc228a83face5cbf9bd3ef9d5015792309554893"
+    },
     "robustness_prediction.json": {
       "bytes": 2473,
       "sha256": "a7bfbb324df8f3d2bced7e054d27bde8ec907f9ee2dfdde818d26ffdeb07754d"
@@ -297,5 +311,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "5be84099d7bae126d1eb9b5ae40700388f8af75c"
+  "commit": "7f40b7d60a7860c9fa44d4f4fc7b86e181d28c79"
 }

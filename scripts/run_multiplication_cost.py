@@ -77,9 +77,11 @@ def write_inputs(directory: Path, n_parties: int) -> None:
 def one_size(root: Path, n_mults: int, n_parties: int, threshold: int,
              field_bits: int, repeats: int, binary: str, template: str,
              tag: str, file_prep: bool = False,
-             prime: int | None = None) -> dict:
+             prime: int | None = None, options: str | None = None) -> dict:
     run = MPSpdzRun(root, f"multcost{tag}{n_mults}", n_parties, threshold,
                     binary=binary)
+    if options:
+        run.extra_args += ["--options", options]
     if file_prep:
         # -F on the party binary consumes preprocessing from files, so the
         # measurement is the online phase only. Without it a single-phase run
@@ -132,6 +134,9 @@ def main() -> int:
     ap.add_argument("--prime", type=int, default=None,
                     help="the modulus the preprocessing on disk was made for; "
                          "read it from Player-Data/<n>-MSpT<t>-<bits>/Params-Data")
+    ap.add_argument("--options", default=None,
+                    help="passed through to the party binary as --options, e.g. "
+                         "robust for the ATLAS variant that drops the king")
     ap.add_argument("--file-prep", action="store_true",
                     help="consume preprocessing from files, so the figure is the "
                          "online phase only")
@@ -154,7 +159,7 @@ def main() -> int:
     for name, binary in protocols:
         rows = [one_size(args.root, n, args.parties, args.threshold,
                          args.field_bits, args.repeats, binary, PROGRAM,
-                         name[:3], args.file_prep, args.prime)
+                         name[:3], args.file_prep, args.prime, args.options)
                 for n in (small, large)]
         arm = {"binary": binary, "rows": rows,
                "per_multiplication": slope(rows, args.parties, args.field_bits, delta)}

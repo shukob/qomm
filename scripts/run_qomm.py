@@ -84,7 +84,11 @@ class MPSpdzRun:
         self.binary = binary
         # Only the Shamir binaries take a threshold. A dishonest-majority
         # protocol has one by definition --- n-1 --- and rejects the flag.
-        self.pass_threshold = "shamir" in binary
+        # Which binaries take -T. It is the ShamirMachineSpec family, and
+        # `"shamir" in binary` was standing in for that --- which silently
+        # excluded atlas-party.x, whose threshold would then have defaulted
+        # to (n-1)/2 and measured 3-of-7 while the caller asked for 2.
+        self.pass_threshold = any(k in binary for k in ("shamir", "atlas"))
         self.extra_args: list[str] = []
         self.program = program
         self.n_parties = n_parties

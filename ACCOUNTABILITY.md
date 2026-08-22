@@ -481,6 +481,138 @@ than "the protocol occasionally fails" makes it sound.
 
 ---
 
+## 3.7 Rung 5, built and run: the decoder is enough if there are nine nodes
+
+§3.6 stops at "robust *reconstruction* at `t < n/3` is a local decode plus 40%
+on openings, and robust *computation* is GSZ and is a bigger job". The second
+half of that was too pessimistic, and reading the engine is what showed it.
+
+### The line is `n >= 4t+1`, not `t < n/3`
+
+Reed--Solomon corrects `e` errors iff `n - d >= 2e + 1`. A product before degree
+reduction is `d = 2t`, and robustness wants `e = t`, so
+
+    n - 2t >= 2t + 1,  i.e.  n >= 4t + 1.
+
+| `n` | `t` | product degree | capacity | |
+|---:|---:|---:|---:|---|
+| 7 | 2 | 4 | 1 | **one short --- this deployment** |
+| **9** | **2** | 4 | **2** | enough |
+| 13 | 3 | 6 | 3 | enough |
+
+`t < n/3` is the line where segmenting, checkpoints and player elimination
+become necessary. **`t < n/4` is the line where a decoder is enough.** The
+distance between them is the whole of GSZ's machinery, and two more nodes buys
+past it.
+
+### And it lands on ATLAS, not on the protocol deployed
+
+`Protocols/Shamir.hpp` is GRR re-sharing --- `prepare_mul` does
+`resharing->add_mine(x * y * rec_factor)` and `finalize` sums the received
+degree-`t` shares. **There is no degree-`2t` opening anywhere in it**, so there
+is nothing to correct and none of this touches `malicious-shamir-party.x`.
+
+`Protocols/Atlas.hpp` is Damgård--Nielsen and does what the argument needs, and
+two of the three things §3.5 said GSZ would have to be written for are already
+sitting in it:
+
+| | |
+|---|---|
+| **the king with relays** | already there --- `base_king`, `next_king = (next_king + 1) % n` |
+| **random double sharings** | already there --- `get_double_sharing()` returns `{[r]_2t, [r]_t}` |
+| hyper-invertible matrices | already there --- `Shamir<T>::get_randoms` uses `get_hyper` |
+| segments, checkpoints, player elimination | not there, **and not needed** |
+
+`atlas-party.x` ships and is semi-honest; there is no malicious ATLAS.
+
+### The king is where "consistent but wrong" lives, and it can be removed
+
+ATLAS's king interpolates from `2t+1` shares and then **re-shares**. A lying king
+re-shares a perfectly consistent sharing of the wrong value, and no amount of
+error correction on a codeword catches a codeword that is correct.
+
+It does not have to be there. `r` is a **fresh** degree-`2t` random, so the
+masked product is not secret and can go to everybody. Every party then decodes
+the whole codeword itself and computes `[xy]_t = e - [r]_t` locally, with `e`
+public. Nobody's word is taken; there is no re-sharing step; there is nothing to
+segment and nobody to eliminate.
+
+`patches/robust-atlas.patch`, `--options robust`.
+
+### What it does, measured
+
+host-a, `n = 9`, `T = 2`, 128-bit, 2000 multiplications, with
+`QOMM_CORRUPT_PLAYER` making the named parties send a wrong share of **every**
+masked product (`artifacts/robust_atlas.json`):
+
+| corrupted | answer | named | |
+|---|---|---|---|
+| none | correct | --- | 8 rounds |
+| `{0}` | **correct** | `[0]` | **did not stop** |
+| `{0,1}` | **correct** | `[0,1]` | **did not stop** |
+| `{8}` | **correct** | `[8]` | **did not stop** |
+| `{0,1,2}` | --- | --- | refuses: beyond the capacity of a degree-4 sharing over 9 points |
+| `n = 7` | --- | --- | refuses to start: corrects only 1 against a threshold of 2 |
+
+**The four middle lines are rung 5.** The protocol did not stop and the answer
+was right.
+
+### And it is cheaper than what is deployed
+
+| | elements/party/mult | rounds |
+|---|---:|---|
+| ATLAS with a king, `n=9` | 5.333 | 9 -> 13 |
+| **this, `n=9`** | **18.222** | **8 -> 12** |
+| malicious Shamir + naming, `n=7` | 64.236 | 11 -> 23 |
+
+**0.28x per party and 0.37x globally against the engine actually deployed, with
+fewer rounds, and it does not stop.** Dropping the king removes a round: it was
+to the king and back, and it is now one all-to-all.
+
+### What is *not* robust, named honestly
+
+Only the degree-reduction step. The **double sharings** come from
+`Shamir<T>::get_randoms`, which is hyper-invertible matrices with no malicious
+check in this build --- a corrupt contributor can make `[r]_t` and `[r]_2t`
+inconsistent with each other, and no decode on either alone sees it. The
+**output opening** is `IndirectShamirMC`, unchanged. The **inputs** are whatever
+the caller shared.
+
+The first of those is preprocessing, **and preprocessing is allowed to abort**:
+it consumes no inputs, so a failed run leaks nothing and denies nobody an
+outcome. It is re-run, and a node that keeps failing it is removed between
+auctions, which is governance rather than protocol. Guaranteed output delivery
+is only needed once real inputs are in.
+
+The third is already closed in QOMM and not in this benchmark: the dealer
+publishes a Pedersen commitment per share, so a node handed a bad share proves
+it to anybody by the commitment not opening --- the complaint protocol a robust
+input phase normally needs is paid for by publicly auditable MPC.
+
+### The prediction was 1.6x low
+
+`artifacts/robust_by_decoding_prediction.json`, written before any of this ran,
+modelled the swap as "remove the king's 2 elements, add the all-to-all's `n-1`"
+and got 11.3. Measured 18.222; the swap costs 12.889 rather than 6. The model
+counted global traffic on the sending side only and **the discrepancy has not
+been isolated**, so it is a bad model rather than a finding about the protocol.
+
+What did land: the round count (8 against the king's 9), the behaviour under one
+and two liars, the refusal past capacity, and the refusal to start below
+`n >= 4t+1`.
+
+### What it costs that is not bandwidth
+
+**Two more institutions.** `POSITION.md`'s own risk register says the binding
+constraint is assembling the consortium at all, so `n = 9` raises the risk that
+matters most. Keeping `n = 7` and dropping to `T = 1` also satisfies `n >= 4T+1`
+and costs nothing on the wire --- and drops the privacy threshold to 1, so any
+two colluding nodes reconstruct every order in the book. Not available to a
+venue.
+
+
+---
+
 ## 4. Accountability is a different question and does not have a free answer
 
 Not stopping and naming the party that tried to stop you are separate
@@ -735,10 +867,11 @@ about.
 `POSITION.md` says "no accountability and no robustness" and lists both as gaps
 of the same kind. They are not.
 
-**Robustness should be reclassified from a gap to an unbuilt saving.** The
-setting supports it, the protocol exists, the price is below what is already
-being paid, and what is missing is an implementation in the engine. That is a
-statement about MP-SPDZ, not about this design.
+**Robustness is no longer a gap. It is built and it is cheaper than what it
+replaces.** §3.7: at `n = 9` the degree-reduction step corrects up to two wrong
+shares, names their senders, and does not stop --- 0.28x per party against the
+deployed engine, with fewer rounds. What is still not robust is the
+preprocessing, which is allowed to abort because it consumes no inputs.
 
 **Accountability stays a gap, and a real one.** The only measured price for the
 full package is 11x to 20x, in a harder regime, and the honest-majority version
@@ -749,7 +882,12 @@ has not been measured by anybody --- including here.
 ## 6. What is not settled
 
 - **GSZ is not implemented here and has not been run.** The 5.5 to 7.5 figure is
-  theirs, not ours. What is ours is the 8.0 and 48.2 it is being compared to.
+  theirs, not ours. What is ours is the 8.0 and 48.2 it is being compared to ---
+  and §3.7 reaches rung 5 without it, by moving to `n >= 4T+1` where a decoder
+  suffices, at a cost GSZ's asymptotics would beat.
+- **Rung 5 here is the multiplication, not the whole protocol.** The double
+  sharings, the output opening and the input phase are unchanged; §3.7 says
+  which of those matter and why the preprocessing one does not.
 - **The honest-majority price of rung 4 is unknown.** Rivinius et al. measured
   the dishonest-majority price; the analogous number for `t < n/3` Shamir does
   not appear to exist and is not derived here.
