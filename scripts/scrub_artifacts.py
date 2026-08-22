@@ -10,7 +10,8 @@ The earlier plan was to keep the real names and scrub at publication time, on
 the argument that editing a measurement's provenance devalues it. That argument
 does not survive contact with the actual risk, which is a repository that is
 unsafe to publish until somebody remembers a step nobody wrote down. Nothing is
-lost that `scripts/hosts.py` does not hold --- the mapping is the provenance.
+lost that `scripts/host_map.txt` does not hold --- the mapping is the
+provenance, and it is the one file here that does not ship.
 
 Only whole names are replaced, and only names the mapping knows, so a file that
 happens to contain a substring is left alone and an unknown machine is reported
@@ -29,7 +30,8 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.hosts import LABELS                                    # noqa: E402
 
-# longest first, so `host-b` is not half-eaten by a shorter key
+# longest first, so a name is never half-eaten by a shorter key that is a
+# prefix of it --- the table has several such pairs
 PATTERN = re.compile("|".join(re.escape(k) for k in
                               sorted(LABELS, key=len, reverse=True)))
 
