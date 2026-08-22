@@ -381,6 +381,16 @@ field, every arm verified against the cleartext reference:
 **Naming costs zero extra rounds and 0.068% more traffic than merely
 detecting.** Against no check at all it is one round and 0.087%.
 
+**That table is the superseded variant.** Its coefficients are derived from the
+dealer's commitments, which are published before a node feeds the engine, so a
+node can read them and pick an error in their kernel --- `BINDING.md` 3.0 and
+`security.tex` Proposition 1. The sound construction draws the challenge *after*
+the input phase and takes its powers modulo the MPC prime; measured at the
+matched field it is **one extra round and 0.39% more traffic** than the
+aggregate check, with soundness `2^-245` instead of `2^-42`
+(`artifacts/sound_check.json`). The rows above are kept because they are what
+the 0.39% is measured against.
+
 Forty-nine openings rather than seven because at the 6-bit coefficients the
 generator emits, one combination binds a party at about `2^-6`, so seven
 repetitions give `2^-42` --- *per party*. They are independent, so they cost one
