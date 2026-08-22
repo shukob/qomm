@@ -315,9 +315,63 @@ committed"*. **Turning that into a verdict means opening one combination per
 party rather than one over all inputs** --- `n` openings and `n` masks instead of
 one, and the masks are what forced the 164-bit field in the first place.
 
-**So the answer splits.** Who sent a malformed share: nameable now, locally, for
-40% on openings. Who lied about their input: still open, and priced in section 4
-at `n` times the check.
+### And the dealer already publishes what would name that one too
+
+`qomm_transport.roles.Dealing` carries **`share_commitments` --- one commitment
+per share per value** --- so that a node can run `check_share` on what it was
+handed and anyone can run `adds_up` on whether the shares sum to the committed
+value. Those are exactly the commitments a per-party check combines. **What was
+missing was not the commitments. It was opening one combination per party
+instead of one over all inputs.**
+
+| | statement | outcome |
+|---|---|---|
+| today | `s = sum_j c_j v_j + m` against `sum_j c_j C_j + C_m` | *an* input was substituted |
+| **per party** | `s_p = sum_j c_j x_{p,j} + m_p` against `sum_j c_j C_{p,j} + C_{m_p}` | **node `p` did it** |
+
+`sum_p s_p` is the old opening with the old mask, so this is strictly stronger
+rather than an alternative. The soundness argument is unchanged and now applies
+per party: the coefficients come from the commitments, so a node has to choose
+its error before it can see the coefficient that would cancel it.
+
+**Built and measured** --- `zk/input_check.py` `build_per_party` /
+`verify_per_party`, 26 tests, `host-a`:
+
+| inputs | verify, aggregate | verify, per party | |
+|---:|---:|---:|---:|
+| 16 | 1.52 ms | 10.61 ms | 6.98x |
+| 64 | 5.74 ms | 40.00 ms | 6.97x |
+| **166** | **14.01 ms** | **103.54 ms** | **7.39x** |
+
+and it named the substituting node at every size.
+
+**Two things came out that were not obvious.**
+
+**It needs a *narrower* field: 160 bits against the aggregate check's 164.**
+Party `p` combines *shares*, which are `value_bits + SLACK_BITS = 71` wide
+rather than 31, so its combination is wider --- but the mask is that party's own
+input and is **not dealt across nodes**, so it does not pay the share slack plus
+`log2(n)` that forced the aggregate check to 164. The term that dominated
+`BINDING.md` section 3.1 simply is not there.
+
+**And there is no capacity limit.** The Reed--Solomon decode caps at `T = 2` and
+refuses at three. This names *any* number of substituting nodes, tested to all
+seven, because each party's check stands alone against that party's own
+commitments. **That matters, because the case a decoder gives up on is exactly
+the case an operator most needs a name for.**
+
+**What is not done**: the circuit still opens one combination. Emitting `n`
+means `gen_qomm` keeping the per-party shares rather than summing them
+immediately, and dealing each mask to one node rather than splitting it --- a
+change to the main input path that every circuit test depends on, so it is
+stated rather than half-landed. The cost is `n` openings instead of one in the
+same round, which takes the check's own traffic from 0.0126 MB to about 0.09 MB
+against 19.37 MB for a quote: **under half a percent**.
+
+**So the answer splits, and both halves now have a mechanism.** Who sent a
+malformed share: named by the engine, patch applied, 1.33x. Who lied about their
+input: named by the dealer's own commitments, built and measured at 7.4x the
+check and a narrower field, with the circuit emission left to do.
 
 ### Why a griefing abort is worse here than in generic MPC
 

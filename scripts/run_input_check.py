@@ -30,8 +30,9 @@ from zk.commit import Pedersen                                       # noqa: E40
 from zk.groups import make_group                                     # noqa: E402
 from zk.scheme import make_scheme                                    # noqa: E402
 from zk.input_check import (CHALLENGE_BITS, WidthError, build,       # noqa: E402
-                            check_width, coefficients, field_bits_needed,
-                            mask_bits, opening_bits, verify)
+                            build_per_party, check_width, coefficients,
+                            field_bits_needed, mask_bits, opening_bits,
+                            per_party_field_bits, verify, verify_per_party)
 
 
 def width_budget() -> dict:
@@ -80,6 +81,49 @@ def calibrate(scheme, n: int = 200) -> dict:
     return summarise([s * 1e6 for s in seconds])
 
 
+def measure_per_party(key, n_inputs: int, n_parties: int, repeats: int,
+                      share_bits: int = 71) -> dict:
+    """The same statement, opened once per party, so a failure has a name.
+
+    `input_check` proves *an* input was substituted. This proves *which node*
+    did it, which is the step from the first of the five rungs in
+    `ACCOUNTABILITY.md` to the fourth. The commitments it combines are the ones
+    `qomm_transport.roles.Dealing` already publishes, so what is measured here
+    is the marginal cost and not the whole construction.
+    """
+    import secrets as _secrets
+    shares = [[_secrets.randbelow(1 << share_bits) for _ in range(n_inputs)]
+              for _ in range(n_parties)]
+    blindings = [[key.random_blinding() for _ in range(n_inputs)]
+                 for _ in range(n_parties)]
+    context = b"qomm:per-party-check:bench"
+
+    build_ms, verify_ms, named = [], [], None
+    for _ in range(repeats):
+        start = time.perf_counter()
+        check = build_per_party(key, shares, blindings, context)
+        build_ms.append((time.perf_counter() - start) * 1e3)
+        start = time.perf_counter()
+        ok, _, culprits = verify_per_party(key, check, context)
+        verify_ms.append((time.perf_counter() - start) * 1e3)
+        assert ok and not culprits
+    # and that it names the right one, which is the only reason it exists
+    check = build_per_party(key, shares, blindings, context)
+    from zk.input_check import PerPartyCheck, per_party_coefficients
+    coeffs = per_party_coefficients(key, check.share_commitments,
+                                    check.mask_commitments, context)
+    openings = list(check.openings)
+    openings[3] += sum(coeffs)
+    _, _, named = verify_per_party(
+        key, PerPartyCheck(check.share_commitments, check.mask_commitments,
+                           openings, check.opening_blindings,
+                           check.challenge_bits), context)
+    return {"n_inputs": n_inputs, "n_parties": n_parties,
+            "build_ms": summarise(build_ms), "verify_ms": summarise(verify_ms),
+            "named_the_substituting_node": named == [3],
+            "field_bits_needed": per_party_field_bits(n_inputs, 31)}
+
+
 def measure(key, n_inputs: int, repeats: int) -> dict:
     values = [(-1) ** i * (37 * i + 5) for i in range(n_inputs)]
     blindings = [key.random_blinding() for _ in values]
@@ -120,6 +164,9 @@ def main() -> int:
                     help="commitment schemes to measure, from zk/scheme.py")
     ap.add_argument("--inputs", type=int, nargs="+", default=[16, 64, 166, 512])
     ap.add_argument("--repeats", type=int, default=20)
+    ap.add_argument("--parties", type=int, default=7,
+                    help="node count for the per-party arm, which names the "
+                         "substituting node instead of only detecting it")
     args = ap.parse_args()
 
     result = {"host": this_host(), "group": args.group, "repeats": args.repeats,
@@ -141,6 +188,40 @@ def main() -> int:
                   f"accepted={row['accepted']}")
         result["schemes"][name] = block
         print()
+    pedersen = result["schemes"].get("pedersen")
+    if pedersen is not None:
+        from zk.commit import Pedersen as _P
+        key = make_scheme("pedersen", group=args.group)
+        rows = [measure_per_party(key, n, args.parties, max(3, args.repeats // 4))
+                for n in args.inputs]
+        aggregate = {r["n_inputs"]: r for r in pedersen["rows"]}
+        for row in rows:
+            base = aggregate.get(row["n_inputs"])
+            if base:
+                row["over_aggregate"] = {
+                    "build": round(row["build_ms"]["median"]
+                                   / base["build_ms"]["median"], 2),
+                    "verify": round(row["verify_ms"]["median"]
+                                    / base["verify_ms"]["median"], 2)}
+        result["per_party"] = {
+            "what": ("one opening per party instead of one over all inputs, so a "
+                     "failing check names the node. The commitments it combines "
+                     "are the ones roles.Dealing already publishes, so this is "
+                     "the marginal cost."),
+            "n_parties": exact(args.parties),
+            "field_bits_needed": exact(per_party_field_bits(166, 31)),
+            "aggregate_field_bits_needed": exact(field_bits_needed(166, 31)),
+            "rows": rows}
+        print("\nper-party (names the node) against aggregate (detects only):")
+        for row in rows:
+            over = row.get("over_aggregate", {})
+            print(f"  {row['n_inputs']:>5} inputs  "
+                  f"build {render(row['build_ms'], 2, ' ms'):>21}  "
+                  f"verify {render(row['verify_ms'], 2, ' ms'):>21}  "
+                  f"{over.get('verify', '?')}x  named={row['named_the_substituting_node']}")
+        print(f"  field: {per_party_field_bits(166, 31)} bits against "
+              f"{field_bits_needed(166, 31)} for the aggregate check")
+
     ped = result["schemes"].get("pedersen"); vol = result["schemes"].get("vole")
     if ped and vol:
         result["vole_speedup"] = {
