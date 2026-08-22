@@ -228,6 +228,79 @@ In the circuit, both arms verified:
 
 ---
 
+## 3.9 Built, and run end to end
+
+Sections 2 and 3 measured the two routes. This is the first one wired up:
+`zk/binding.py`, `scripts/run_binding_chain.py`, `make binding-chain`.
+
+The fix is an identity rather than a comparison, which is the part worth
+stating. `build_inputs` takes a `deal_hook`, so the party that commits to a
+value is the party that shares it, in the one pass that writes the party files.
+Nothing can be committed and not dealt, or dealt and not committed, because the
+two are the same object --- and the test that says so is `==` between the party
+file and the dealer's shares rather than a check that two dealings agree.
+
+The circuit changes by one line. `secret_input()` was `sum(get_input_from(p))`
+and is now `sum(LAGRANGE[p] * get_input_from(p))` with public coefficients
+interpolating at zero from **all `n` points**, not `t+1`. Public times secret is
+local, so the round count and the input count are both untouched.
+
+Measured here, `host-c`, one market, `n=8` makers, `N=7`, `T=2`, 31-bit values,
+both arms verified against the cleartext reference:
+
+| | answer | rounds | global traffic |
+|---|---|---:|---:|
+| default field, additive inputs | `(99970, 1)` | 57 | 9.3038 MB |
+| **group order, Shamir inputs** | **`(99970, 1)`** | **57** | **18.6019 MB** |
+| ratio | same | **1.00x** | **1.9994x** |
+
+**Rounds do not move and traffic is the element width and nothing else**, which
+is what section 2 measured on `host-a` and what was predicted in
+`artifacts/binding_chain_prediction.json` before any of this was written. Wall
+clock is not comparable to section 2's 1.07x: that was at 15 ms of simulated
+delay, where round trips dominate; at zero delay on a laptop the field width
+shows through and the same pair is 0.197 s against 0.315 s.
+
+The chain, and what each arm does (`artifacts/binding_chain.json`):
+
+| arm | outcome |
+|---|---|
+| honest | 86 values committed and shared in one pass; 602 share checks, none failing; a range proof on `half` against the band `[1, 200]` verifying **against the commitment that was dealt**; circuit `got=(99994, 5) want=(99994, 5)` over the 253-bit prime |
+| a dealer that deals what it did not commit | **caught at party 3, position 8, before anything is computed** |
+| a node that feeds something else | **not caught here, and the artifact says so** --- a substituted input is a valid share of a different number and every commitment still opens. That is section 3's check, which catches the node where this catches the dealer |
+
+One share check is **0.167 ms** --- three point exponentiations against the
+coefficient commitments plus one commitment --- against a prediction of 0.19 ms.
+Seventy fields across seven nodes is 13 ms, next to the range proofs the audit
+already pays.
+
+**They compose, and now they have been run together.** Six arms, all verified
+against the cleartext reference on one market:
+
+| inputs | field | check | rounds | global traffic |
+|---|---|---|---:|---:|
+| additive | default | none | 57 | 9.3038 MB |
+| additive | default | aggregate | 58 | 9.3101 MB |
+| additive | default | per-party | 59 | 9.4448 MB |
+| Shamir | group order | none | 57 | 18.6019 MB |
+| Shamir | group order | aggregate | 58 | 18.6145 MB |
+| **Shamir** | **group order** | **per-party** | **59** | **18.8838 MB** |
+
+The aggregate check is one round and about six kilobytes, and the per-party one
+is **two rounds and 0.28 MB** --- one opening a node rather than one for all of
+them, which is what buys naming the node instead of only detecting that
+somebody substituted. That is the price of the difference and it is worth
+stating next to it, because the earlier table quoted the aggregate's cost for a
+check that is not sound.
+
+`--check-mode aggregate` now returns non-zero without
+`--unsound-check-for-measurement`. The rows above are how it was measured.
+
+**What is still not done.** The same treatment has not been applied to
+`state_audit.py`, whose shares are still its own.
+
+---
+
 ## 4. Which one to take
 
 | | binds the inputs | quote proof publicly verifiable | cost |

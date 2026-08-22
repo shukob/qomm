@@ -81,10 +81,7 @@ ja: {
   b_offline:"最初から参加しない",
   b_offline_d:"入力は全ノードの持ち分を足して作るので、1つ欠けると値そのものが消えます。ここは頑健ではありません。",
   inertTitle:"いまは MP-SPDZ が回しています",
-  inertWhy:"この切り替えは届きません。MP-SPDZ 側で嘘をつかせるには頑健版 ATLAS の "
-    +"ビルド（--options robust と QOMM_CORRUPT_PLAYER）と、その protocol 用に "
-    +"コンパイルした回路が要ります。まだ繋いでいないので、繋がっているふりをせず "
-    +"止めてあります。sim に戻せば全部動きます。",
+  inertWhy:"この切り替えは届きません。",
   verifiedYes:"平文の照合と一致", verifiedNo:"平文の照合と不一致",
   protocolMs:"プロトコル時間", engRounds:"ラウンド数", engMb:"通信量 (MB)",
   compiledOnce:"最初の1回のコンパイル",
@@ -180,10 +177,7 @@ en: {
   b_offline:"never take part",
   b_offline_d:"inputs are the sum of every node's share, so one missing share destroys the value. This part is not robust.",
   inertTitle:"MP-SPDZ is running this",
-  inertWhy:"this switch does not reach it. Making a party lie inside MP-SPDZ needs "
-    +"the robust ATLAS build (--options robust and QOMM_CORRUPT_PLAYER) and a "
-    +"circuit compiled for that protocol. That is not wired up, so the switch is "
-    +"stopped rather than left looking connected. Go back to sim and it all works.",
+  inertWhy:"this switch does not reach it.",
   verifiedYes:"matches the cleartext reference", verifiedNo:"does NOT match the cleartext reference",
   protocolMs:"protocol time", engRounds:"rounds", engMb:"traffic (MB)",
   compiledOnce:"compiled once",
@@ -646,7 +640,9 @@ function buildNode(root){
 }
 function updateNode(){
   const d = V.node || {}, p = V.public || {}, e = nodeEls;
-  const inert = V.config.engine !== 'sim';
+  // Inert only when the engine cannot carry the switch. Under the robust
+  // build a wrong share in a multiplication is a real party misbehaving.
+  const inert = V.config.engine !== 'sim' && !V.config.robust;
   e.inert.classList.toggle('hide', !inert);
   BEHAVIOURS.forEach(name => {
     const on = d.behaviour === name;

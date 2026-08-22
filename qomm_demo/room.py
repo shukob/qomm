@@ -34,7 +34,7 @@ import secrets as _secrets
 from qomm_transport.roles import Dealing, check_share
 
 from .model import BUY, FIELDS, SELL, Outcome, Policy, Request, evaluate
-from .protocol import BEHAVIOURS, HONEST, Rejection, Session
+from .protocol import BEHAVIOURS, HONEST, LIE_PRODUCT, Rejection, Session
 
 
 class HashCommitment:
@@ -474,8 +474,13 @@ class Room:
         The misbehaviour switches do not reach this engine and the round says
         so, rather than leaving a switch that looks connected and is not.
         """
+        # A node seat that chose to lie during a multiplication is passed
+        # through, so the switch corrupts a real party when the build can carry
+        # it. `stats["robust"]` says whether it did, and the browser reads that
+        # rather than assuming.
+        lying = [j for j, b in self.behaviour.items() if b == LIE_PRODUCT]
         outcome, ok, detail, stats = self.engine.quote(
-            request, policies, self.reference, self.now_t)
+            request, policies, self.reference, self.now_t, corrupt=lying)
         if outcome is None:
             session.transcript.stop("engine", detail or "the engine did not answer")
             return Outcome(), False, detail, stats
@@ -484,9 +489,16 @@ class Room:
             # the one thing this engine exists to be able to notice, so it stops
             # the round rather than showing a number nothing vouched for.
             session.transcript.stop("mismatch", detail)
-        cheats = [j for j, b in self.behaviour.items() if b != HONEST]
-        if cheats:
-            session.transcript.inert_behaviours = cheats
+        named = stats.get("named") or []
+        if named:
+            session.transcript.name(named)
+        # Only the switches the engine cannot carry are inert. Under the robust
+        # build a wrong share in a multiplication is a real party misbehaving,
+        # and the names above came out of its log.
+        inert = [j for j, b in self.behaviour.items()
+                 if b != HONEST and not (stats.get("robust") and b == LIE_PRODUCT)]
+        if inert:
+            session.transcript.inert_behaviours = inert
         return outcome, ok, detail, stats
 
     def _check_dealings(self, held, stated, n_values: int) -> list[Rejection]:

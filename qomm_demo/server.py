@@ -251,6 +251,8 @@ class Demo:
                 "auto_rounds": self.auto_rounds,
                 "engine": getattr(self.engine, "name", "sim"),
                 "engine_note": getattr(self.engine, "note", SIM_NOTE),
+            "robust": getattr(self.engine, "robust", True),
+            "robust_reason": getattr(self.engine, "robust_reason", ""),
             },
             "assets": [{"name": a.name, "reference": a.reference, "scale": a.scale}
                        for a in room.assets],

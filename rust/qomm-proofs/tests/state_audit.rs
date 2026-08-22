@@ -109,3 +109,65 @@ fn a_chain_is_checked_against_its_own_limit() {
 fn limit_of(book: &Book) -> qomm_proofs::state_audit::InventoryLimit {
     book.auditor.commit_limit(book.limit, &book.limit_blinding).unwrap()
 }
+
+// --- and the state audited has to be the state the circuit was fed ---------
+
+/// The commitments the input dealer published for each step's opening state.
+fn dealt_from(opening: &curve25519_dalek::ristretto::RistrettoPoint,
+              steps: &[StateStep]) -> Vec<curve25519_dalek::ristretto::CompressedRistretto> {
+    let mut out = Vec::with_capacity(steps.len());
+    let mut previous = *opening;
+    for step in steps {
+        out.push(previous.compress());
+        previous = step.inventory;
+    }
+    out
+}
+
+#[test]
+fn a_chain_bound_to_what_was_dealt_verifies() {
+    let book = Book::new(500);
+    let (opening, steps) = book.walk(&[100, -40, 250]);
+    let dealt = dealt_from(&opening, &steps);
+    assert_eq!(book.auditor.verify_chain_bound(&opening, &steps, &limit_of(&book),
+                                               &dealt), Ok(()));
+}
+
+#[test]
+fn an_impeccable_chain_over_an_inventory_the_circuit_never_saw_is_refused() {
+    // The gap this closes, stated as the test that would have caught it: every
+    // proof in the chain verifies, and the chain is about a different book.
+    let book = Book::new(500);
+    let (opening, steps) = book.walk(&[100, -40, 250]);
+    assert_eq!(book.auditor.verify_chain(&opening, &steps, &limit_of(&book)), Ok(()));
+
+    let mut dealt = dealt_from(&opening, &steps);
+    let elsewhere = book.auditor.key.commit(&Scalar::from(7u64),
+                                            &Scalar::random(&mut OsRng));
+    dealt[1] = elsewhere.compress();
+    assert!(matches!(
+        book.auditor.verify_chain_bound(&opening, &steps, &limit_of(&book), &dealt),
+        Err(ChainError::NotTheDealtState { index: 1, .. })));
+}
+
+#[test]
+fn one_step_can_be_bound_on_its_own() {
+    let book = Book::new(500);
+    let (opening, steps) = book.walk(&[100, -40]);
+    let limit = limit_of(&book);
+    assert!(book.auditor.verify_update_bound(&steps[0], &opening, &limit,
+                                             &opening.compress()));
+    let elsewhere = book.auditor.key.commit(&Scalar::from(3u64),
+                                            &Scalar::random(&mut OsRng));
+    assert!(!book.auditor.verify_update_bound(&steps[0], &opening, &limit,
+                                              &elsewhere.compress()));
+}
+
+#[test]
+fn a_dealt_list_of_the_wrong_length_is_refused_rather_than_zipped() {
+    let book = Book::new(500);
+    let (opening, steps) = book.walk(&[100, -40, 250]);
+    let dealt = dealt_from(&opening, &steps);
+    assert!(book.auditor.verify_chain_bound(&opening, &steps, &limit_of(&book),
+                                            &dealt[..2]).is_err());
+}

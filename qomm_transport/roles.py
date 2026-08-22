@@ -64,6 +64,55 @@ def split(value: int, n_nodes: int, value_bits: int, rng=None) -> list[int]:
     return shares
 
 
+def lagrange_at_zero(n_nodes: int, prime: int) -> list[int]:
+    """Public coefficients that rebuild f(0) from f(1) ... f(n).
+
+    The circuit multiplies each party's input by its coefficient and adds, which
+    is public-times-secret and therefore local: no rounds, no traffic. Taking
+    all `n` points rather than `t+1` is deliberate --- it leaves the input count
+    and the circuit shape exactly as the additive form had them, so the only
+    thing that changes is what the shares mean.
+    """
+    points = list(range(1, n_nodes + 1))
+    out = []
+    for x in points:
+        numerator = denominator = 1
+        for other in points:
+            if other == x:
+                continue
+            numerator = (numerator * (-other)) % prime
+            denominator = (denominator * (x - other)) % prime
+        out.append(numerator * pow(denominator, -1, prime) % prime)
+    return out
+
+
+def shamir_split(value: int, n_nodes: int, threshold: int, prime: int,
+                 rng=None) -> list[int]:
+    """`value` as `f(1) ... f(n)` of a random degree-`t` polynomial over `prime`.
+
+    The sharing `zk/policy_audit.py` already commits to, dealt so that it is
+    also the sharing the circuit reads. That identity is the whole point: the
+    additive form in `split` hides just as well, but nothing ties it to the
+    commitments the audit publishes, so a maker could have one policy audited
+    and a different one computed.
+
+    Hiding is perfect against `threshold` colluding nodes rather than
+    statistical, and no slack bits are spent, because a share is a uniform field
+    element rather than a wide integer.
+    """
+    if n_nodes < 2 * threshold + 1:
+        raise ValueError(f"{n_nodes} nodes cannot carry a threshold of {threshold}")
+    rng = rng or secrets.SystemRandom()
+    coefficients = [value % prime] + [rng.randrange(prime) for _ in range(threshold)]
+    shares = []
+    for x in range(1, n_nodes + 1):
+        acc = 0
+        for c in reversed(coefficients):
+            acc = (acc * x + c) % prime
+        shares.append(acc)
+    return shares
+
+
 def check_field_width(n_nodes: int, value_bits: int, field_bits: int) -> None:
     """Refuse a field the reconstruction would wrap in.
 

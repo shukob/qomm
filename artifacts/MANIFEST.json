@@ -14,6 +14,15 @@
       "bytes": 13934,
       "sha256": "c839d12c4d7315701a295c0f9c1217509b3d5268be4a6259edba552ab537b48b"
     },
+    "binding_chain.json": {
+      "bytes": 3613,
+      "host": "host-c",
+      "sha256": "ee96573ca2f3ab933541e47434e6272f058278a6de743740da26e2e54ca5122b"
+    },
+    "binding_chain_prediction.json": {
+      "bytes": 4631,
+      "sha256": "7fd1201e9e2e0e047a2afaa06d24828d87a364a2c3178cd41114e3327415e997"
+    },
     "binding_limit.json": {
       "bytes": 3928,
       "host": "host-a",
@@ -229,6 +238,11 @@
       "host": "host-a",
       "sha256": "8014728c2cb47f2737d254ce4596e2fdddfd274d8539f408e64799fb0332f257"
     },
+    "robust_atlas_host_c.json": {
+      "bytes": 2754,
+      "host": "host-c",
+      "sha256": "d53be344d15cd67aa55be1a933acc74807b24560aa9948e7ea399a39e079b8ba"
+    },
     "robust_by_decoding_prediction.json": {
       "bytes": 6690,
       "sha256": "b94ef4b22f1a1ce915a7edc8dc228a83face5cbf9bd3ef9d5015792309554893"
@@ -311,5 +325,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "ff11c2129ed75cadd78310d23819c9768311443e"
+  "commit": "efa4bb9a62b2362c6aa292c6f7fda57c0e72055d"
 }

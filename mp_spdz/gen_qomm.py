@@ -28,7 +28,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from qomm_transport.roles import SLACK_BITS, check_field_width, split  # noqa: E402
+from qomm_transport.roles import (SLACK_BITS, check_field_width,  # noqa: E402
+                                  lagrange_at_zero, shamir_split, split)
 import sys
 from pathlib import Path
 
@@ -39,6 +40,11 @@ from pathlib import Path
 # whole level in `mid` instead.
 FIELDS = ("asset", "mid", "half", "slope", "invcoef", "inv", "maxqty",
           "expiry", "active", "use_ref")
+
+# The scalar field of ed25519, which is what a Pedersen share is an element of.
+# Written here rather than imported so the generator stays runnable without the
+# proof stack; `tests/test_binding_chain.py` holds the two to each other.
+ED25519_ORDER = 2 ** 252 + 27742317777372353535851937790883648493
 
 def mask_bits_for(n_values: int, value_bits: int, challenge_bits: int = 40,
                   statistical_bits: int = 40) -> int:
@@ -97,6 +103,7 @@ def build_program(
     audit_gates: bool = False,
     bit_length: int = 63,
     argmin_arity: int = 2,
+    lagrange: list | None = None,
     price_conditionals: int = 0,
     edabit: bool = False,
     trunc_pr: bool = False,
@@ -159,7 +166,11 @@ def build_program(
     w(f"MAKER_ASSET = {maker_assets}")
     w(f"REF_MID = {ref_mid}   # only used for the sentinel scale")
     w("")
-    if check_mode == "per-party":
+    # The mode says which check, and `input_check` says whether there is one.
+    # Branching on the mode alone put the check machinery into every program
+    # the moment per-party became the default, which the input-shape test
+    # caught by finding a reconstruction that no longer started at node 0.
+    if input_check and check_mode == "per-party":
         # every value the circuit reads through `secret_input`: the request's
         # four fields per request, `is_real`, the trader's output mask, and each
         # maker's policy. If this and the program disagree the Array write
@@ -203,6 +214,30 @@ def build_program(
         w("    total = sint.get_input_from(0)")
         w("    for _p in range(1, N_PARTIES):")
         w("        total = total + sint.get_input_from(_p)")
+        w("    return total")
+    if lagrange is not None:
+        # Shamir inputs. A party holds f(p+1) of a degree-t polynomial whose
+        # constant term is the value, so reconstruction is a public linear
+        # combination --- free in rounds, and the same number of reads as the
+        # additive form it replaces. Interpolating from all n points rather
+        # than t+1 is what keeps the input count and the circuit shape the same.
+        #
+        # It buys the only thing it is for: the share a node feeds is the share
+        # the dealer committed to in `zk/policy_audit.py`, so the policy that
+        # was audited is the policy that was computed on. It costs a field ---
+        # a share is a scalar, so the MPC prime has to be the group order.
+        #
+        # It does not cost a threshold, which it looks like it should. Additive
+        # sharing across all n needs every node to reconstruct an input, where
+        # Shamir needs t+1 --- but `secret_input` hands the value to MP-SPDZ,
+        # which holds it as a degree-t sharing from that point on. Any t+1 nodes
+        # could always reconstruct it. The additive layer was buying a stronger
+        # guarantee than the protocol underneath it, which is not a guarantee.
+        w("LAGRANGE = [" + ", ".join(str(c) for c in lagrange) + "]")
+        w("def secret_input():")
+        w("    total = LAGRANGE[0] * sint.get_input_from(0)")
+        w("    for _p in range(1, N_PARTIES):")
+        w("        total = total + LAGRANGE[_p] * sint.get_input_from(_p)")
         w("    return total")
     w("")
     w("# ---- user request, shared by the trader across every node ----")
@@ -262,7 +297,7 @@ def build_program(
     for f in FIELDS:
         w(f"    col_{f}[i] = secret_input()")
     w("")
-    if check_mode == "per-party":
+    if input_check and check_mode == "per-party":
         w("")
         w("# ---- input check, one opening per node ----------------------------")
         w("# `zk/input_check.py` build_per_party / verify_per_party is the other")
@@ -629,6 +664,36 @@ def build_program(
     return "\n".join(lines) + "\n"
 
 
+# Where things sit in the stream `build_inputs` writes. The request's four
+# fields, then `is_real`, then the trader's mask (and its limit pair when the
+# binding limit is on), then each maker's policy in `FIELDS` order.
+#
+# This lives beside the function that lays the stream out, and nowhere else.
+# Something audited elsewhere --- a state chain, a policy band --- has to be
+# tied to the commitment that was actually dealt for it, and finding that
+# commitment by counting again somewhere else is precisely how the gap
+# `BINDING.md` opens with came about.
+REQUEST_FIELDS = 4
+
+
+def position_of(maker: int, field: str, *, n_requests: int = 1,
+                binding_limit: bool = False) -> int:
+    """Where one maker's one policy field sits in the stream the circuit reads."""
+    if field not in FIELDS:
+        raise ValueError(f"{field} is not a policy field; expected one of {FIELDS}")
+    base = n_requests * REQUEST_FIELDS + 2 + (2 if binding_limit else 0)
+    return base + maker * len(FIELDS) + FIELDS.index(field)
+
+
+def commitment_at(bound, maker: int, field: str, **kw):
+    """The dealt commitment for one maker's one field.
+
+    `bound` is a `qomm_transport.binding.BoundInputs`. This is the object the
+    Rust `state_audit` takes when it refuses a chain about any other inventory.
+    """
+    return bound.values[position_of(maker, field, **kw)].commitment.commitment
+
+
 def build_inputs(
     n_mm: int,
     n_real_mm: int,
@@ -655,8 +720,20 @@ def build_inputs(
     check_coefficients: list | None = None,
     check_repeats: int = 7,
     policies_in: list | None = None,
+    shamir_prime: int | None = None,
+    shamir_threshold: int = 2,
+    deal_hook=None,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
+
+    `deal_hook(value, position) -> list[int]` takes over the dealing. It exists
+    so that the party that commits to a value can be the party that shares it:
+    `zk/binding.py` passes a hook that commits, shares, records the commitment
+    and returns the shares, so the audit is produced *by* the dealing instead of
+    beside it. Beside it is what went wrong --- the audit sharing Shamir over the
+    group order while the circuit read additive shares over the integers, with
+    nothing anywhere comparing the two. One place knows the order of the input
+    stream, and this is it.
 
     `policies_in` replaces the fixture with policies someone else chose --- a
     person editing them in the demo, a tape replayed from a venue --- so the
@@ -674,7 +751,8 @@ def build_inputs(
     # order `secret_input()` reads them. Party p's file therefore holds one
     # share of every secret and no whole value of anything -- which
     # `tests/test_mpc_inputs.py` checks rather than trusts.
-    check_field_width(n_parties, value_bits, field_bits)
+    if shamir_prime is None:
+        check_field_width(n_parties, value_bits, field_bits)
 
     # The sharing draws from its own stream. Sharing off `rng` would make the
     # policy fixture depend on how many values had been split before it, so the
@@ -682,6 +760,20 @@ def build_inputs(
     share_rng = random.Random(seed ^ 0x5EED)
 
     def deal(value: int, width: int | None = None) -> None:
+        if deal_hook is not None:
+            for party, share in enumerate(deal_hook(int(value),
+                                                    len(per_party[0]))):
+                per_party[party].append(share)
+            return
+        if shamir_prime is not None:
+            # The sharing the policy audit commits to, dealt so that it is also
+            # the sharing the circuit reads. `width` has no meaning here --- a
+            # share is a uniform field element, so there is no slack to size.
+            for party, share in enumerate(
+                    shamir_split(int(value), n_parties, shamir_threshold,
+                                 shamir_prime, share_rng)):
+                per_party[party].append(share)
+            return
         for party, share in enumerate(split(int(value), n_parties,
                                             value_bits if width is None else width,
                                             share_rng)):
@@ -817,6 +909,51 @@ def build_inputs(
     return per_party, reference
 
 
+def finish_reference(reference: dict, *, padded: int, bit_length: int,
+                     ref_table: list, is_real: int, n_assets: int,
+                     user_asset: int, real_mm: int, mode: str) -> dict:
+    """Everything the checker needs that the arithmetic did not produce.
+
+    `build_inputs` computes what the circuit must reproduce; this is the packing
+    and the no-quote convention around it. Split out because two callers need
+    it --- the generator and `scripts/run_binding_chain.py`, which deals in
+    process --- and a second copy of the sentinel rule would be a second
+    definition of what "no eligible maker" means.
+    """
+    # the circuit opens one packed key, so the reference carries the same packing
+    if reference["best_cost"] is not None:
+        reference["best_key"] = reference["best_cost"] * padded + reference["best_mm"]
+    if reference["best_ask"] is not None:
+        reference["ask_key"] = reference["best_ask"] * padded + reference["best_ask_mm"]
+        reference["bid_key"] = (-reference["best_bid"]) * padded + reference["best_bid_mm"]
+    # With no eligible maker the circuit legitimately answers "no quote": every
+    # key is the sentinel, so the smallest is the one at index zero. The
+    # reference has to expect that rather than treat it as a mismatch.
+    sentinel = sentinel_for(bit_length, padded, 8 * max(ref_table))
+    if reference["best_cost"] is None:
+        reference["no_eligible_maker"] = True
+        reference["best_cost"] = sentinel
+        reference["best_mm"] = 0
+        reference["best_key"] = sentinel * padded
+    else:
+        reference["no_eligible_maker"] = False
+    if reference["best_ask"] is None:
+        reference["best_ask"] = sentinel
+        reference["best_ask_mm"] = 0
+        reference["ask_key"] = sentinel * padded
+        reference["best_bid"] = -sentinel
+        reference["best_bid_mm"] = 0
+        reference["bid_key"] = sentinel * padded
+    reference["is_real"] = is_real
+    reference["n_assets"] = n_assets
+    reference["ref_table"] = ref_table
+    reference["user_asset"] = user_asset
+    reference["padded_mm"] = padded
+    reference["real_mm"] = real_mm
+    reference["mode"] = mode
+    return reference
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-mm", type=int, default=16)
@@ -873,10 +1010,16 @@ def main() -> int:
                          "deployment derives them from the published "
                          "commitments and passes them here.")
     ap.add_argument("--check-mode", choices=("aggregate", "per-party"),
-                    default="aggregate",
-                    help="aggregate opens one combination and detects a "
-                         "substitution; per-party opens one per node and names "
-                         "the node that made it")
+                    default="per-party",
+                    help="per-party opens one combination per node and names the "
+                         "node that substituted. `aggregate` is the earlier form "
+                         "and is UNSOUND as emitted; it is kept because the cost "
+                         "table was taken against it, and it refuses to run "
+                         "without --unsound-check-for-measurement")
+    ap.add_argument("--unsound-check-for-measurement", action="store_true",
+                    help="permit --check-mode aggregate, which is unsound. Only "
+                         "reason to: reproducing the cost baseline the "
+                         "optimisation history was measured against")
     ap.add_argument("--input-check", action="store_true",
                     help="emit the random linear combination that binds the "
                          "inputs to the published commitments")
@@ -898,6 +1041,12 @@ def main() -> int:
                          "it once and only the inputs change per request")
     ap.add_argument("--out-program", type=Path, required=True)
     ap.add_argument("--out-input-dir", type=Path, required=True)
+    ap.add_argument("--shamir-inputs", action="store_true",
+                    help="deal inputs as Shamir shares over the commitment "
+                         "group's scalar field instead of additively over the "
+                         "integers, so the shares the nodes feed are the ones "
+                         "`zk/policy_audit.py` commits to. Requires running the "
+                         "MPC over that prime: --field-bits 253 and -P the order")
     ap.add_argument("--ref-table", default=None,
                     help="public reference price per asset, comma separated. "
                          "Without it the prices are spread 5000 apart, which "
@@ -912,14 +1061,33 @@ def main() -> int:
     coefficients = (json.loads(args.check_coefficients.read_text())
                     if args.check_coefficients else None)
     if args.input_check and args.check_mode != "per-party":
-        print("WARNING: the AGGREGATE input check is unsound as emitted. Its "
-              "coefficients are fixed before the circuit reads its inputs, so "
-              "a node that has seen them can substitute two values whose "
-              "errors cancel --- see artifacts/coefficient_timing_flaw.json. "
-              "Use --check-mode per-party, which draws its challenge after the "
-              "input phase.", file=sys.stderr)
+        # A warning printed to stderr is a warning nobody reads in a pipeline.
+        # The mode stays available because the cost table was measured against
+        # it, and it stops unless somebody says that is why they want it.
+        message = ("the AGGREGATE input check is unsound as emitted. Its "
+                   "coefficients are fixed before the circuit reads its inputs, "
+                   "so a node that has seen them can substitute two values "
+                   "whose errors cancel --- see "
+                   "artifacts/coefficient_timing_flaw.json. --check-mode "
+                   "per-party draws its challenge after the input phase.")
+        if not args.unsound_check_for_measurement:
+            print(f"error: {message} Pass "
+                  f"--unsound-check-for-measurement if you are reproducing the "
+                  f"cost baseline; there is no other reason to.", file=sys.stderr)
+            return 7
+        print(f"WARNING: {message} Emitting it because "
+              f"--unsound-check-for-measurement was given.", file=sys.stderr)
 
     padded = _pow2_ceil(args.n_mm)
+    # The commitment group's scalar field, when the inputs are its shares. One
+    # place, so the generator, the dealer and the audit cannot disagree about
+    # which prime they are over --- a disagreement there is a wrong answer and
+    # not an error.
+    shamir_prime = lagrange = None
+    if args.shamir_inputs:
+        shamir_prime = ED25519_ORDER
+        lagrange = lagrange_at_zero(args.n_parties, shamir_prime)
+
     # spread the reference prices apart so a wrong asset selection is obvious
     ref_table = [args.ref_mid + 5_000 * a for a in range(args.n_assets)]
     if args.ref_table:
@@ -963,6 +1131,7 @@ def main() -> int:
         audit_gates=args.audit_gates,
         bit_length=args.bit_length,
         argmin_arity=(padded if args.argmin_arity <= 0 else args.argmin_arity),
+        lagrange=lagrange,
         stop_after=args.stop_after,
         price_conditionals=args.price_conditionals,
         edabit=args.edabit,
@@ -1012,43 +1181,18 @@ def main() -> int:
         user_limit=args.user_limit,
         check_repeats=args.check_repeats,
         policies_in=policies,
+        shamir_prime=shamir_prime,
+        shamir_threshold=(args.n_parties - 1) // 2,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)
     for party, values in per_party.items():
         path = args.out_input_dir / f"Input-P{party}-0"
         path.write_text(" ".join(str(v) for v in values) + "\n", encoding="utf-8")
 
-    # the circuit opens one packed key, so the reference carries the same packing
-    if reference["best_cost"] is not None:
-        reference["best_key"] = reference["best_cost"] * padded + reference["best_mm"]
-    if reference["best_ask"] is not None:
-        reference["ask_key"] = reference["best_ask"] * padded + reference["best_ask_mm"]
-        reference["bid_key"] = (-reference["best_bid"]) * padded + reference["best_bid_mm"]
-    # With no eligible maker the circuit legitimately answers "no quote": every
-    # key is the sentinel, so the smallest is the one at index zero. The
-    # reference has to expect that rather than treat it as a mismatch.
-    sentinel = sentinel_for(args.bit_length, padded, 8 * max(ref_table))
-    if reference["best_cost"] is None:
-        reference["no_eligible_maker"] = True
-        reference["best_cost"] = sentinel
-        reference["best_mm"] = 0
-        reference["best_key"] = sentinel * padded
-    else:
-        reference["no_eligible_maker"] = False
-    if reference["best_ask"] is None:
-        reference["best_ask"] = sentinel
-        reference["best_ask_mm"] = 0
-        reference["ask_key"] = sentinel * padded
-        reference["best_bid"] = -sentinel
-        reference["best_bid_mm"] = 0
-        reference["bid_key"] = sentinel * padded
-    reference["is_real"] = args.is_real
-    reference["n_assets"] = args.n_assets
-    reference["ref_table"] = ref_table
-    reference["user_asset"] = args.user_asset
-    reference["padded_mm"] = padded
-    reference["real_mm"] = args.n_mm
-    reference["mode"] = args.mode
+    finish_reference(reference, padded=padded, bit_length=args.bit_length,
+                     ref_table=ref_table, is_real=args.is_real,
+                     n_assets=args.n_assets, user_asset=args.user_asset,
+                     real_mm=args.n_mm, mode=args.mode)
     args.out_reference.write_text(json.dumps(reference, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"padded_mm": padded, "real_mm": args.n_mm, "mode": args.mode,
                       "best_price": reference["best_price"], "best_mm": reference["best_mm"]}))

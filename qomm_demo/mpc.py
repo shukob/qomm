@@ -15,13 +15,13 @@ for the party count in use, and it will not run on a laptop somebody has just
 been handed. The badge in the corner of every page says which engine produced
 the number on screen, always, in both directions.
 
-**The misbehaviour switches do not reach it.** A node seat set to lie is lying
-in the demo's own share layer; the parties MP-SPDZ starts are the stock ones and
-compute honestly. Wiring the switches through would mean the robust ATLAS build
---- `--options robust` and `QOMM_CORRUPT_PLAYER`, which do exist --- and a
-circuit compiled for that protocol rather than for malicious Shamir. That is a
-real thing to build and it is not built here, so the browser says so instead of
-letting the switch look connected.
+**The misbehaviour switches reach it when the build can carry them.** With
+`atlas-party.x` and the robust patch, `--options robust` and
+`QOMM_CORRUPT_PLAYER` make the named parties send a wrong share of every masked
+product, the others correct it, and the log names who --- so a node seat set to
+lie in the browser corrupts a real party in a real protocol. It needs `n >= 4T+1`
+and a patched build; without either, the switch is stopped with the reason
+rather than left looking connected, which is what `robust_reason` carries.
 """
 
 from __future__ import annotations
@@ -49,8 +49,13 @@ class MpcEngine:
 
     def __init__(self, root: str | None, n_parties: int = 7, threshold: int = 2,
                  n_makers: int = 8, n_assets: int = 3, bit_length: int = 63,
-                 binary: str = "malicious-shamir-party.x",
+                 binary: str | None = None,
                  ref_table: list[int] | None = None):
+        # The robust build if there is one and the party count can carry it,
+        # because that is the build where a node seat's switch means something.
+        # Choosing it here rather than asking the caller keeps the one condition
+        # --- n >= 4T+1 --- next to the reason for it.
+        binary = binary or self._pick(root, n_parties, threshold)
         self.root = Path(root or os.environ.get(
             "MP_SPDZ_ROOT", str(Path.home() / "work/qomm/MP-SPDZ")))
         if not (self.root / binary).exists():
@@ -68,12 +73,15 @@ class MpcEngine:
         # against a table spread 5000 apart, and the label would be a lie.
         self.ref_table = list(ref_table) if ref_table else None
         self.binary = binary
+        self.robust = binary.startswith("atlas") and n_parties >= 4 * threshold + 1
+        self.robust_reason = self._why_not(root, n_parties, threshold)
         self.workdir = Path(tempfile.mkdtemp(prefix="qomm-demo-mpc-"))
         self.run: MPSpdzRun | None = None
         self.source: Path | None = None
         self.compile_ms = 0.0
         self.served = 0
-        self.note = f"MP-SPDZ {binary.split('-party')[0]}, n={n_parties}, T={threshold}"
+        self.note = (f"MP-SPDZ {binary.split('-party')[0]}, n={n_parties}, "
+                     f"T={threshold}" + (", robust" if self.robust else ""))
 
     @staticmethod
     def held(inputs: Path, how_many: int = 6) -> dict[int, list[str]]:
@@ -84,6 +92,31 @@ class MpcEngine:
             values = path.read_text(encoding="utf-8").split()[:how_many]
             out[index] = [f"{int(v) & ((1 << 72) - 1):018x}" for v in values]
         return out
+
+    @staticmethod
+    def _pick(root, n_parties: int, threshold: int) -> str:
+        """The robust build when it is there and the parties can carry it."""
+        base = Path(root or os.environ.get(
+            "MP_SPDZ_ROOT", str(Path.home() / "work/qomm/MP-SPDZ")))
+        if (base / "atlas-party.x").exists() and n_parties >= 4 * threshold + 1:
+            return "atlas-party.x"
+        return "malicious-shamir-party.x"
+
+    @staticmethod
+    def _why_not(root, n_parties: int, threshold: int) -> str:
+        """Why a node seat's switch will not reach the engine, when it will not."""
+        base = Path(root or os.environ.get(
+            "MP_SPDZ_ROOT", str(Path.home() / "work/qomm/MP-SPDZ")))
+        if not (base / "atlas-party.x").exists():
+            return ("no atlas-party.x under the MP-SPDZ tree. Corrupting a real "
+                    "party needs the robust build --- `--options robust` and "
+                    "QOMM_CORRUPT_PLAYER --- and this tree does not have it.")
+        if n_parties < 4 * threshold + 1:
+            return (f"n = {n_parties} at T = {threshold} is below n >= 4T+1, so a "
+                    f"wrong share in a multiplication is detected and not "
+                    f"corrected. Robust ATLAS refuses to start rather than "
+                    f"pretending; run with {4 * threshold + 1} nodes.")
+        return ""
 
     def _request(self, request, policies=None) -> dict:
         filled = dict(DEFAULTS)
@@ -111,13 +144,21 @@ class MpcEngine:
         self.source = source
         self.run = MPSpdzRun(self.root, f"qomm_demo_{os.getpid()}",
                              self.n_parties, self.threshold, binary=self.binary)
+        if self.robust:
+            self.run.extra_args += ["--options", "robust"]
         started = time.perf_counter()
         self.run.install(source, self.workdir / "shape" / "inputs")
         self.run.compile()
         self.compile_ms = (time.perf_counter() - started) * 1e3
 
-    def quote(self, request, policies, reference_prices, now_t: int):
-        """One round in the engine. Returns the outcome and what it cost."""
+    def quote(self, request, policies, reference_prices, now_t: int,
+              corrupt: list | None = None):
+        """One round in the engine. Returns the outcome and what it cost.
+
+        `corrupt` is the node seats that chose to lie during a multiplication.
+        They are passed to the parties in the environment, so the same value
+        reaches all of them and exactly the named ones misbehave.
+        """
         self.prepare(request, policies)
         payload = self._request(request, policies)
         _, inputs, reference = generate(payload, self.workdir / "live",
@@ -126,8 +167,21 @@ class MpcEngine:
         # it is the party file the process is about to read.
         held = self.held(inputs)
         self.run.install(self.source, inputs)
-        result = self.run.execute(0.0)
-        stats = {"protocol_ms": (result.get("party0_seconds") or 0.0) * 1e3,
+        before = os.environ.get("QOMM_CORRUPT_PLAYER")
+        if self.robust and corrupt:
+            os.environ["QOMM_CORRUPT_PLAYER"] = ",".join(str(c) for c in corrupt)
+        try:
+            result = self.run.execute(0.0)
+        finally:
+            if before is None:
+                os.environ.pop("QOMM_CORRUPT_PLAYER", None)
+            else:
+                os.environ["QOMM_CORRUPT_PLAYER"] = before
+        # who the decoder named, from the log the parties actually wrote
+        named = sorted({int(m) for m in re.findall(
+            r"ROBUST_ATLAS_CORRECTED player (\d+)", result.get("log", ""))})
+        stats = {"named": named, "robust": self.robust,
+                 "protocol_ms": (result.get("party0_seconds") or 0.0) * 1e3,
                  "wall_ms": result["wall_seconds"] * 1e3,
                  "rounds": result.get("party0_rounds"),
                  "mb": result.get("party0_mb"),

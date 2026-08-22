@@ -82,14 +82,30 @@ is its own party input file, because that is what it holds.
     python3 scripts/serve_demo.py --engine mpc --nodes 7 --threshold 2 \
         --mp-spdz-root ~/work/qomm/MP-SPDZ
 
-A round is a few hundred milliseconds against a couple, it needs a built MP-SPDZ
-with certificates for the party count in use, and the misbehaviour switches do
-not reach it: the parties it starts are the stock ones. Making a party lie
-inside MP-SPDZ needs the robust ATLAS build --- `--options robust` and
-`QOMM_CORRUPT_PLAYER`, which exist and are measured in
-`artifacts/robust_atlas.json` --- together with a circuit compiled for that
-protocol. That is not wired up, so the browser stops the switch rather than
-leaving it looking connected.
+A round is a few hundred milliseconds against a couple, and it needs a built
+MP-SPDZ with certificates for the party count in use.
+
+**The misbehaviour switches reach it when the build can carry them.** With
+`atlas-party.x` and the robust patch, a node seat set to send a wrong share
+during a multiplication corrupts a **real party in a real protocol**: the others
+correct it, the answer still verifies against the cleartext reference, and the
+log names exactly who. Measured at nine parties and threshold two:
+
+| node seats lying | price | verified | named | rounds |
+|---|---:|:---:|---|---:|
+| none | 15878 | yes | --- | 62 |
+| node 0 | **15878** | yes | **[0]** | 62 |
+| nodes 0 and 4 | **15878** | yes | **[0, 4]** | 62 |
+
+The engine picks `atlas-party.x` when the tree has one and `n >= 4T+1`, and says
+why not when it does not --- a build without the patch, or too few nodes for a
+wrong share in a multiplication to be corrected rather than only detected. The
+browser reads that reason rather than assuming, so a stopped switch says which
+of the two it is.
+
+The other switches --- a wrong share at the final opening, a substituted input,
+going quiet --- still run in the demo's own share layer only, and the banner
+says so.
 
 The demo's market is the circuit's market, and that is a test rather than a
 claim: `tests/test_demo.py` prices twenty-five random fixtures through both

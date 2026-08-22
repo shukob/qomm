@@ -368,15 +368,26 @@ def main() -> int:
                          "inside it is a trade, so probing costs a fill")
     ap.add_argument("--user-limit", type=int, default=100000)
     ap.add_argument("--check-mode", choices=("aggregate", "per-party"),
-                    default="aggregate",
+                    default="per-party",
                     help="per-party opens one combination per node, so a failing "
-                         "check names the node instead of only detecting one")
+                         "check names the node instead of only detecting one. "
+                         "`aggregate` is unsound as emitted and the generator "
+                         "refuses it without --unsound-check-for-measurement")
+    ap.add_argument("--unsound-check-for-measurement", action="store_true",
+                    help="pass it through to the generator, for reproducing the "
+                         "cost baseline and nothing else")
     ap.add_argument("--file-prep", action="store_true",
                     help="consume preprocessing from files, so the measurement is the "
                          "online phase only")
     ap.add_argument("--user-asset", type=int, default=0)
     ap.add_argument("--prime", type=int, default=None,
                     help="run the MPC over this prime instead of the default field")
+    ap.add_argument("--shamir-inputs", action="store_true",
+                    help="deal inputs as Shamir shares of the commitment group's "
+                         "scalar field, so the shares the nodes feed are the ones "
+                         "the policy audit commits to. Implies that prime and "
+                         "sets the field width, because a share is a scalar and "
+                         "will not fit anything narrower")
     ap.add_argument("--tag", default="")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
@@ -388,6 +399,19 @@ def main() -> int:
     if not (root / args.protocol).exists():
         print(f"{args.protocol} missing under {root}", file=sys.stderr)
         return 2
+
+    if args.shamir_inputs:
+        # One flag rather than three that have to agree. Setting the prime and
+        # the width by hand and getting one of them wrong produces a wrong
+        # answer rather than an error, which is the worst kind of knob.
+        from mp_spdz.gen_qomm import ED25519_ORDER
+
+        if args.prime not in (None, ED25519_ORDER):
+            print("--shamir-inputs fixes the prime; do not also pass --prime",
+                  file=sys.stderr)
+            return 2
+        args.prime = ED25519_ORDER
+        args.field_bits = ED25519_ORDER.bit_length()
 
     work = Path(tempfile.mkdtemp(prefix="qomm-gen-"))
     program = f"qomm_{args.mode}_m{args.n_mm}_{args.disclose}_{os.getpid()}"
@@ -409,11 +433,14 @@ def main() -> int:
         "--argmin-arity", str(args.argmin_arity),
         "--stop-after", args.stop_after,
         "--check-mode", args.check_mode,
+        *(["--unsound-check-for-measurement"]
+          if args.unsound_check_for_measurement else []),
         "--user-limit", str(args.user_limit),
         *(["--binding-limit"] if args.binding_limit else []),
         *(["--edabit"] if args.edabit else []),
         *(["--trunc-pr"] if args.trunc_pr else []),
         *(["--input-check"] if args.input_check else []),
+        *(["--shamir-inputs"] if args.shamir_inputs else []),
         "--n-requests", str(args.n_requests),
         *(["--public-maker-assets"] if args.public_maker_assets else []),
         *(["--audit-gates"] if args.audit_gates else []),

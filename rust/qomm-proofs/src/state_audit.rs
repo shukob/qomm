@@ -89,6 +89,16 @@ pub struct StateAuditor {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChainError {
     LimitNotInRange,
+    /// The state this step started from is not the state the circuit was fed.
+    ///
+    /// The gap this catches is the same one `BINDING.md` opens with, one level
+    /// along: a maker could audit an impeccable inventory chain and hand the
+    /// circuit a different inventory, and every proof in the chain would still
+    /// verify. What closes it is not new cryptography --- it is requiring that
+    /// the commitment a step follows *is* the commitment the input dealer
+    /// published for that maker's inventory, which the dealer already publishes
+    /// and nobody was comparing.
+    NotTheDealtState { index: usize, step: u64 },
     /// A replayed or forked inventory: this step did not follow the one before.
     Forked { index: usize, step: u64 },
     Arithmetic { index: usize, step: u64 },
@@ -230,6 +240,39 @@ impl StateAuditor {
             }
         }
         true
+    }
+
+    /// The same, and the state has to be the one the circuit computed on.
+    ///
+    /// `dealt[i]` is the commitment the input dealer published for this maker's
+    /// inventory at step `i` --- the same object `qomm_transport/binding.py`
+    /// produces for every value it deals. Without this the chain proves that
+    /// *some* inventory moved correctly; with it, that the one the quote was
+    /// priced from did.
+    pub fn verify_update_bound(
+        &self, step: &StateStep, old_commitment: &RistrettoPoint,
+        limit: &InventoryLimit, dealt: &CompressedRistretto,
+    ) -> bool {
+        old_commitment.compress() == *dealt
+            && self.verify_update(step, old_commitment, limit)
+    }
+
+    /// Walk the chain, requiring each step to start from the state that was dealt.
+    pub fn verify_chain_bound(
+        &self, opening: &RistrettoPoint, steps: &[StateStep], limit: &InventoryLimit,
+        dealt: &[CompressedRistretto],
+    ) -> Result<(), ChainError> {
+        if dealt.len() != steps.len() {
+            return Err(ChainError::NotTheDealtState { index: 0, step: 0 });
+        }
+        let mut previous = *opening;
+        for (index, step) in steps.iter().enumerate() {
+            if previous.compress() != dealt[index] {
+                return Err(ChainError::NotTheDealtState { index, step: step.step });
+            }
+            previous = step.inventory;
+        }
+        self.verify_chain(opening, steps, limit)
     }
 
     /// Walk the chain from a known opening state.

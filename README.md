@@ -78,6 +78,7 @@ is re-run.
 Rust:
 
 - `rust/qomm-dsl`
+- `rust/qomm-law`
 - `rust/qomm-proofs`
 - `rust/qomm-sim`
 - `rust/qomm-mpc`
