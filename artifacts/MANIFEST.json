@@ -18,6 +18,10 @@
       "bytes": 3987,
       "sha256": "2a51665bb285bcfb187b587f28a9cca3891e51afa4873b96fda81d7218cd4aff"
     },
+    "challenge_fix_prediction.json": {
+      "bytes": 2506,
+      "sha256": "d65797936a081f62f5002c04c074c22918ef11fb4fe8f363b7c12362c9a29319"
+    },
     "clob_baseline_clean_d0.json": {
       "bytes": 1383,
       "host": "host-a",
@@ -57,6 +61,10 @@
       "bytes": 1038,
       "host": "host-a",
       "sha256": "0a5d5d778f4e74cf5291ea2a71b77d7c4a9d708670550c3cd00d880f00e0bedc"
+    },
+    "coefficient_timing_flaw.json": {
+      "bytes": 2941,
+      "sha256": "fd70422e8ae3c64280b7a9d51a3fe1321f01900411f088913cca6583ed2ec71b"
     },
     "decode_patch.json": {
       "bytes": 3892,
@@ -246,6 +254,11 @@
       "host": "host-c",
       "sha256": "111e4f68e2ce8ea8011ba0d7dc1697db366409b6f9faead83f858afd537085d8"
     },
+    "sound_check.json": {
+      "bytes": 3052,
+      "host": "host-a",
+      "sha256": "38232e2a5c62dcc0dfea0a044463c8583095ca5dc98c503a3b6690f48313eb05"
+    },
     "stages.json": {
       "bytes": 1084,
       "host": "host-a",
@@ -284,5 +297,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "6857a81f1ea121b882d3d902deda19623b125d1c"
+  "commit": "cbf7b47605a974b74ad632c4c2351903ee38441e"
 }

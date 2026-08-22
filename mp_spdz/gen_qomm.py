@@ -103,6 +103,7 @@ def build_program(
     input_check: bool = False,
     check_mode: str = "aggregate",
     binding_limit: bool = False,
+    challenge_bits: int = 64,
     check_coefficients: list | None = None,
     check_repeats: int = 7,
     stop_after: str = "tournament",
@@ -159,33 +160,41 @@ def build_program(
     w(f"REF_MID = {ref_mid}   # only used for the sentinel scale")
     w("")
     if check_mode == "per-party":
-        w(f"CHECK_COEFF = {check_coefficients}")
-        w("")
-    w("# ---- how a secret gets in ----")
-    w("# An input party is not a computing party. The trader and each market")
-    w("# maker split their values into N shares that sum to them over the")
-    w("# integers and hand share p to node p; the program adds the N inputs")
-    w("# back. Reconstruction is local, so this costs rounds only in the input")
-    w("# phase, and no computing node ever holds a whole request or policy.")
-    if check_mode == "per-party":
-        # One accumulator per node, folded at read time. After secret_input()
-        # forms the sum the shares are gone, so the combination has to be built
-        # as they arrive. The coefficient is a compile-time constant, so public
-        # times secret stays local and only the opening below travels.
-        w(f"CHECK_REPEATS = {check_repeats}")
-        w("check_acc = [[sint(0) for _ in range(N_PARTIES)]")
-        w("             for _ in range(CHECK_REPEATS)]")
+        # every value the circuit reads through `secret_input`: the request's
+        # four fields per request, `is_real`, the trader's output mask, and each
+        # maker's policy. If this and the program disagree the Array write
+        # fails, which is the failure we want rather than a silent short read.
+        n_checked_values = 4 * n_requests + 2 + n_mm * len(FIELDS)
+        w(f"CHALLENGE_BITS = {challenge_bits}")
+        w("# ---- the input check's challenge, and why it is where it is ------")
+        w("# The coefficients have to be unpredictable at the moment a node")
+        w("# fixes its input, and the input is fixed when this program reads")
+        w("# it. An earlier version derived them from the dealer's")
+        w("# commitments, which are published before that --- so a node that")
+        w("# had seen them could feed x_1 + c_2*k and x_2 - c_1*k and the")
+        w("# combination cancelled identically, every time, with no security")
+        w("# parameter to raise.")
+        w("#")
+        w("# So the shares are kept as they are read, one random value is")
+        w("# opened once every input is in, and the coefficients are its")
+        w("# powers. Public times secret is local, so the combination still")
+        w("# costs no communication; the price is that one opening.")
+        w("#")
+        w("# Taking the check modulo the MPC prime is what makes the bound")
+        w("# clean: sum_k rho^k e_k + e_m = 0 is a degree-m polynomial in rho,")
+        w("# so a fixed non-zero error survives with probability at most m/p.")
+        w("# It also removes the width budget entirely --- nothing has to avoid")
+        w("# reducing, because the statement is modulo p on both sides.")
+        w("N_CHECKED = %d" % n_checked_values)
+        w("check_store = [Array(N_CHECKED, sint) for _ in range(N_PARTIES)]")
         w("check_pos = [0]")
         w("")
         w("def secret_input():")
         w("    total = None")
         w("    _k = check_pos[0]")
-        w("    _shares = [sint.get_input_from(_p) for _p in range(N_PARTIES)]")
-        w("    for _r in range(CHECK_REPEATS):")
-        w("        _c = CHECK_COEFF[(_r * 7919 + _k) % len(CHECK_COEFF)]")
-        w("        for _p in range(N_PARTIES):")
-        w("            check_acc[_r][_p] = check_acc[_r][_p] + _shares[_p] * _c")
-        w("    for _s in _shares:")
+        w("    for _p in range(N_PARTIES):")
+        w("        _s = sint.get_input_from(_p)")
+        w("        check_store[_p][_k] = _s")
         w("        total = _s if total is None else total + _s")
         w("    check_pos[0] += 1")
         w("    return total")
@@ -256,26 +265,23 @@ def build_program(
     if check_mode == "per-party":
         w("")
         w("# ---- input check, one opening per node ----------------------------")
-        w("# The aggregate form below proves that AN input was substituted. This")
-        w("# one proves WHICH NODE did it, which is the difference between the")
-        w("# first and the fourth of the five rungs in ACCOUNTABILITY.md.")
-        w("#")
-        w("# Each node's accumulator was folded as its shares were read, because")
-        w("# after secret_input() forms the sum the shares are gone. The masks")
-        w("# are the one place the shape differs from every other input here:")
-        w("# each is read from a single node rather than split across all of")
-        w("# them, which is why the check needs 160 bits of field where the")
-        w("# aggregate one needs 164.")
-        w("#")
         w("# `zk/input_check.py` build_per_party / verify_per_party is the other")
-        w("# half. It combines the same coefficients into the share commitments")
-        w("# `roles.Dealing` already publishes, so a failing opening names a node")
-        w("# from data anybody has.")
-        w("for _r in range(CHECK_REPEATS):")
-        w("    for _p in range(N_PARTIES):")
-        w("        _combined = check_acc[_r][_p] + sint.get_input_from(_p)")
-        w("        print_ln('QOMM_PER_PARTY_CHECK_%s_%s=%s', _r, _p,")
-        w("                 _combined.reveal())")
+        w("# half. It combines the same powers of the same rho into the share")
+        w("# commitments `roles.Dealing` already publishes, so a failing opening")
+        w("# names a node from data anybody has.")
+        w("_rho = sint.get_random_int(CHALLENGE_BITS).reveal()")
+        w("print_ln('QOMM_CHALLENGE=%s', _rho)")
+        w("for _p in range(N_PARTIES):")
+        w("    _c = cint(1)")
+        w("    _acc = sint(0)")
+        w("    for _k in range(N_CHECKED):")
+        w("        _c = _c * _rho")
+        w("        _acc = _acc + check_store[_p][_k] * _c")
+        w("    # the mask is this node's own input and is not split, which is")
+        w("    # why it hides with one uniform field element rather than the")
+        w("    # width budget the integer version needed")
+        w("    _acc = _acc + sint.get_input_from(_p)")
+        w("    print_ln('QOMM_PER_PARTY_CHECK_0_%s=%s', _p, _acc.reveal())")
         w("")
     elif input_check:
         w("")
@@ -742,18 +748,13 @@ def build_inputs(
             # Net at 31-bit values and 40-bit coefficients: 160 bits against
             # 164. At the wider `value_bits` a deployment actually compiles
             # with, both grow together.
-            share_bits = value_bits + SLACK_BITS
-            width = (share_bits + check_bits
-                     + max(0, (n_values - 1).bit_length()) + 40)
+            # One mask per node, uniform in the field. The check is taken
+            # modulo the MPC prime, so nothing has to avoid reducing and the
+            # width budget that forced 164 bits does not apply: a single
+            # uniform field element hides the combination exactly.
             check_field_width(n_parties, value_bits, field_bits)
-            if width + 1 >= field_bits:
-                raise ValueError(
-                    f"the per-party check needs {width + 1} bits at "
-                    f"{check_bits}-bit coefficients and the field is "
-                    f"{field_bits}; widen the field or narrow the coefficients")
-            for _ in range(check_repeats):
-                for party in range(n_parties):
-                    per_party[party].append(share_rng.randrange(1 << width))
+            for party in range(n_parties):
+                per_party[party].append(share_rng.randrange(1 << (field_bits - 1)))
         else:
             width = mask_bits_for(n_values, value_bits, challenge_bits=6,
                                   statistical_bits=35)
@@ -890,6 +891,13 @@ def main() -> int:
     args = ap.parse_args()
     coefficients = (json.loads(args.check_coefficients.read_text())
                     if args.check_coefficients else None)
+    if args.input_check and args.check_mode != "per-party":
+        print("WARNING: the AGGREGATE input check is unsound as emitted. Its "
+              "coefficients are fixed before the circuit reads its inputs, so "
+              "a node that has seen them can substitute two values whose "
+              "errors cancel --- see artifacts/coefficient_timing_flaw.json. "
+              "Use --check-mode per-party, which draws its challenge after the "
+              "input phase.", file=sys.stderr)
 
     padded = _pow2_ceil(args.n_mm)
     # spread the reference prices apart so a wrong asset selection is obvious

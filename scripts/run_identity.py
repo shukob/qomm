@@ -51,11 +51,14 @@ from scripts.measure import exact                                     # noqa: E4
 from scripts.run_qomm import MPSpdzRun                                # noqa: E402
 from zk.commit import Pedersen                                        # noqa: E402
 from zk.groups import make_group                                      # noqa: E402
-from zk.input_check import (PerPartyCheck, per_party_coefficients,    # noqa: E402
-                            verify_per_party)
+from zk.input_check import (PerPartyCheck, powers, verify_per_party)  # noqa: E402
 from zk.scheme import PedersenScheme                                  # noqa: E402
 
+# stands in for the value the circuit opens once every input is in
+BEACON = 0x9E3779B97F4A7C15
+
 OPENING = re.compile(r"QOMM_PER_PARTY_CHECK_(\d+)_(\d+)=(-?\d+)")
+CHALLENGE = re.compile(r"QOMM_CHALLENGE=(-?\d+)")
 
 
 def generate(work: Path, n_mm: int, n_parties: int, field_bits: int,
@@ -76,6 +79,29 @@ def generate(work: Path, n_mm: int, n_parties: int, field_bits: int,
     if done.returncode:
         raise RuntimeError(done.stderr[-3000:])
     return program, inputs, json.loads(reference.read_text())
+
+
+def verify_per_party_with(scheme, commitments, mask_commitments, openings,
+                          blindings, coefficients) -> tuple[bool, str, list[int]]:
+    """The per-party check against coefficients the circuit chose, not us.
+
+    `zk.input_check.verify_per_party` derives its own coefficients from the
+    commitments and a challenge; here the challenge came out of the run and the
+    coefficients are its powers, so the combination is done directly. Same
+    statement, same commitments, one fewer place for the two halves to disagree.
+    """
+    culprits = []
+    for party, opening in enumerate(openings):
+        combined = mask_commitments[party]
+        for c, commitment in zip(coefficients, commitments[party]):
+            combined = scheme.add(combined, scheme.scale(commitment, c))
+        if not scheme.equal(scheme.commit(opening, blindings[party]), combined):
+            culprits.append(party)
+    if not culprits:
+        return True, "ok", []
+    named = ", ".join(f"node {p}" for p in culprits)
+    return False, (f"the inputs {named} fed the circuit were not the ones "
+                   f"committed to them"), culprits
 
 
 def read_inputs(directory: Path, n_parties: int) -> dict[int, list[int]]:
@@ -100,10 +126,16 @@ def run(root: Path, program: Path, per_party: dict[int, list[int]],
     job.compile(prime=prime)
     job.extra_args += ["-P", str(prime)]
     result = job.execute(delay_ms=0.0)
+    log = result.get("log", "")
     openings = {}
-    for repeat, party, value in OPENING.findall(result.get("log", "")):
+    for repeat, party, value in OPENING.findall(log):
         openings[int(party)] = int(value)
-    return {"openings": openings, "log_tail": result.get("log", "")[-400:]}
+    found = CHALLENGE.findall(log)
+    if not found:
+        raise RuntimeError("the circuit did not open a challenge; without one "
+                           "the check has no soundness to verify")
+    return {"openings": openings, "challenge": int(found[0]),
+            "log_tail": log[-400:]}
 
 
 def main() -> int:
@@ -148,37 +180,38 @@ def main() -> int:
         mask_commitments = [scheme.commit(m, b)
                             for m, b in zip(masks, mask_blindings)]
 
-        # the coefficients come AFTER the commitments, which is the whole
-        # soundness argument and the thing the fixture list threw away
-        coefficients = per_party_coefficients(scheme, commitments,
-                                              mask_commitments, context)
+        # The circuit no longer needs a coefficient list handed to it: it
+        # draws its own challenge once every input is read, which is the only
+        # ordering that makes the check sound. So the generator runs once, and
+        # the verifier learns the challenge from the run.
         program, inputs2, reference = generate(work, args.n_mm, args.parties,
-                                               args.field_bits, coefficients)
+                                               args.field_bits, None)
         again = read_inputs(inputs2, args.parties)
-        assert again == per_party, "the dealing changed with the coefficients"
+        assert again == per_party, "the dealing changed between generator runs"
+        prime = scheme.scalar_modulus
 
-        def check(openings: dict[int, int]) -> tuple[bool, str, list[int]]:
+        def check(run_result) -> tuple[bool, str, list[int]]:
+            coefficients = powers(run_result["challenge"], n_checked, prime)
             blinds = [sum(c * r for c, r in zip(coefficients, blindings[p]))
                       + mask_blindings[p] for p in range(args.parties)]
+            openings = run_result["openings"]
             # the circuit prints the signed representative; the commitment
             # lives mod the group order, so bring them into the same ring
-            return verify_per_party(
-                scheme,
-                PerPartyCheck(commitments, mask_commitments,
-                              [openings[p] % scheme.scalar_modulus
-                               for p in range(args.parties)],
-                              blinds), context)
+            return verify_per_party_with(
+                scheme, commitments, mask_commitments,
+                [openings[p] % prime for p in range(args.parties)],
+                blinds, coefficients)
 
         prime = scheme.scalar_modulus
         honest = run(args.root, program, per_party, args.parties,
                      args.threshold, prime, "h")
-        honest_verdict = check(honest["openings"])
+        honest_verdict = check(honest)
 
         tampered_inputs = copy.deepcopy(per_party)
         tampered_inputs[args.tamper_party][args.tamper_index] += 1
         tampered = run(args.root, program, tampered_inputs, args.parties,
                        args.threshold, prime, "t")
-        tampered_verdict = check(tampered["openings"])
+        tampered_verdict = check(tampered)
 
     result = {
         "host": this_host(),

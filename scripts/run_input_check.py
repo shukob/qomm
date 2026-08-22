@@ -35,6 +35,10 @@ from zk.input_check import (CHALLENGE_BITS, WidthError, build,       # noqa: E40
                             per_party_field_bits, verify, verify_per_party)
 
 
+# stands in for the value the circuit opens once every input is in
+BEACON = 0x9E3779B97F4A7C15
+
+
 def width_budget() -> dict:
     """What the check needs from the field, which is the finding rather than a note.
 
@@ -101,23 +105,24 @@ def measure_per_party(key, n_inputs: int, n_parties: int, repeats: int,
     build_ms, verify_ms, named = [], [], None
     for _ in range(repeats):
         start = time.perf_counter()
-        check = build_per_party(key, shares, blindings, context)
+        check = build_per_party(key, shares, blindings, context, BEACON)
         build_ms.append((time.perf_counter() - start) * 1e3)
         start = time.perf_counter()
-        ok, _, culprits = verify_per_party(key, check, context)
+        ok, _, culprits = verify_per_party(key, check, context, BEACON)
         verify_ms.append((time.perf_counter() - start) * 1e3)
         assert ok and not culprits
     # and that it names the right one, which is the only reason it exists
-    check = build_per_party(key, shares, blindings, context)
+    check = build_per_party(key, shares, blindings, context, BEACON)
     from zk.input_check import PerPartyCheck, per_party_coefficients
     coeffs = per_party_coefficients(key, check.share_commitments,
-                                    check.mask_commitments, context)
+                                    check.mask_commitments, context,
+                                    BEACON)
     openings = list(check.openings)
     openings[3] += sum(coeffs)
     _, _, named = verify_per_party(
         key, PerPartyCheck(check.share_commitments, check.mask_commitments,
                            openings, check.opening_blindings,
-                           check.challenge_bits), context)
+                           check.challenge_bits), context, BEACON)
     return {"n_inputs": n_inputs, "n_parties": n_parties,
             "build_ms": summarise(build_ms), "verify_ms": summarise(verify_ms),
             "named_the_substituting_node": named == [3],
@@ -133,10 +138,10 @@ def measure(key, n_inputs: int, repeats: int) -> dict:
     accepted = True
     for _ in range(repeats):
         start = time.perf_counter()
-        check = build(key, values, blindings, context)
+        check = build(key, values, blindings, context, BEACON)
         build_ms.append((time.perf_counter() - start) * 1e3)
         start = time.perf_counter()
-        ok, _ = verify(key, check, context)
+        ok, _ = verify(key, check, context, BEACON)
         verify_ms.append((time.perf_counter() - start) * 1e3)
         accepted = accepted and ok
 

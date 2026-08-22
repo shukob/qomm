@@ -153,6 +153,29 @@ it would have to satisfy did not exist when it chose `e`.
 **Public coefficient times secret share is local**, so the combination costs no
 communication; the opening is the round.
 
+### 3.0 The width budget below is now history, and why
+
+Everything in section 3.1 --- 164 bits, the mask spending its forty bits twice,
+the narrow-coefficient trade with its ceiling at `2^-34` --- exists for one
+reason: the check was taken **over the integers**, so the opening had to avoid
+reducing in the MPC field *and* in the group.
+
+Writing the security proof found that the coefficients were also being fixed
+before a node chose what to feed, which made the check unsound
+(`artifacts/coefficient_timing_flaw.json`). The correction --- draw the
+challenge after the input phase, take its powers, work **modulo the MPC prime**
+--- fixes the soundness and **deletes the budget at the same time**. Nothing has
+to avoid reducing when both sides are modulo `p`, and the mask becomes one
+uniform field element.
+
+Measured: **one extra round and 0.39% more traffic** than the aggregate check,
+at the matched field (`artifacts/sound_check.json`). Soundness goes from
+`2^-42` to about `2^-245`.
+
+**What follows is kept because it is what the cost measurements were taken
+against**, and because the reasoning about where a check can run is still the
+reasoning --- it just has a different answer now.
+
 ### 3.1 The width budget, which decides where it can run
 
 The whole argument is that **the same integer appears on both sides**, so the
