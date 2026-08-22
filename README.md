@@ -88,6 +88,7 @@ Python:
 - `qomm_dsl/`
 - `qomm_audit/`
 - `qomm_transport/`
+- `qomm_demo/`
 - `mp_spdz/`
 
 `artifacts/` holds the measurements the numbers in the paper are taken from, as
@@ -102,6 +103,7 @@ the runners wrote them. Each carries the host it ran on as a label (`host-a`,
 - [`REGULATION.md`](REGULATION.md) --- which accounts and which statutes a live deployment touches, in Japan and in four other jurisdictions
 - [`POSITION.md`](POSITION.md) --- what is new here and what is not, stated line by line against the nearest prior work
 - [`ACCOUNTABILITY.md`](ACCOUNTABILITY.md) --- what happens when a node misbehaves: the five rungs from abort to guaranteed output delivery, and which one each mechanism here reaches
+- [`DEMO.md`](DEMO.md) --- a demonstration a room can operate one seat each, and what is real in it
 
 ## Depends on
 

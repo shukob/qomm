@@ -41,19 +41,27 @@ QOMM_DIR = ROOT
 
 SHAPE = ("n_mm", "n_parties", "mode", "rfs_steps", "disclose", "bit_length",
          "argmin_arity", "n_assets", "n_requests", "edabit", "audit_gates",
-         "public_maker_assets", "threshold")
+         "public_maker_assets", "threshold", "ref_table")
 
 DEFAULTS = {"n_mm": 16, "n_parties": 7, "mode": "rfq", "rfs_steps": 5,
             "disclose": "none", "bit_length": 31, "argmin_arity": 2, "n_assets": 1,
             "n_requests": 1, "edabit": False, "audit_gates": False,
             "public_maker_assets": False, "threshold": 2, "user_qty": 100,
             "user_dir": 0, "user_asset": 0, "seed": 7, "is_real": 1,
-            "delay_ms": 0.0}
+            "delay_ms": 0.0, "policies": None, "ref_table": None}
 
 
 def generate(request: dict, out_dir: Path, inputs_only: bool = False
              ) -> tuple[Path, Path, dict]:
-    """Emit the circuit and the inputs for one request, or only the inputs."""
+    """Emit the circuit and the inputs for one request, or only the inputs.
+
+    `request["policies"]` replaces the seeded fixture with a market somebody
+    else chose --- makers being edited in a browser, a tape being replayed. It
+    is not part of the shape key: policies change the inputs and never the
+    bytecode, which is exactly the property that lets one compiled circuit serve
+    a market that keeps moving, and also the property that keeps the circuit
+    from carrying anything about what it is pricing.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     source = out_dir / "program.mpc"
     inputs = out_dir / "inputs"
@@ -72,6 +80,12 @@ def generate(request: dict, out_dir: Path, inputs_only: bool = False
            "--out-reference", str(reference)]
     if inputs_only:
         cmd.append("--inputs-only")
+    if request.get("ref_table"):
+        cmd += ["--ref-table", ",".join(str(int(v)) for v in request["ref_table"])]
+    if request.get("policies"):
+        supplied = out_dir / "policies.json"
+        supplied.write_text(json.dumps(request["policies"]), encoding="utf-8")
+        cmd += ["--policies", str(supplied)]
     if request["edabit"]:
         cmd.append("--edabit")
     if request["public_maker_assets"]:

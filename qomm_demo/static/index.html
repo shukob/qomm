@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QOMM demo</title>
+<link rel="stylesheet" href="/demo.css">
+</head>
+<body>
+<header>
+  <span class="title" data-s="title">QOMM</span>
+  <span class="sub" data-s="subtitle"></span>
+  <span class="badge engine" id="engine">sim</span>
+  <span class="badge" id="roundno">--</span>
+  <span class="badge" id="countdown"></span>
+  <span class="spacer"></span>
+  <span class="badge seat hide" id="seatbadge"></span>
+  <button id="leave" class="hide" data-s="leave">seat</button>
+  <button id="lang">EN</button>
+</header>
+
+<main>
+  <!-- lobby ------------------------------------------------------------- -->
+  <section id="lobby">
+    <div class="card">
+      <h2 data-s="lobbyTitle"></h2>
+      <p class="why" data-s="lobbyWhy"></p>
+      <div class="row">
+        <label data-s="yourName"></label>
+        <input type="text" id="name" maxlength="24" placeholder="">
+        <button class="go ghost" id="watch" data-s="watch"></button>
+      </div>
+      <h3 style="font-size:.8rem;color:var(--gray);margin:.7rem 0 .3rem"
+          data-s="theSeats"></h3>
+      <div class="lobby-grid" id="lobbygrid"></div>
+    </div>
+    <div class="card">
+      <h2 data-s="whatIsThis"></h2>
+      <div id="explain"></div>
+    </div>
+  </section>
+
+  <!-- shared round strip -------------------------------------------------- -->
+  <section id="stage" class="hide">
+    <div class="phases" id="phases"></div>
+    <div class="phase-note" id="phasenote"></div>
+
+    <div id="panel"></div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2 data-s="publicTitle"></h2>
+        <p class="why" data-s="publicWhy"></p>
+        <div id="publicbody"></div>
+      </div>
+      <div class="card">
+        <h2 data-s="seatsTitle"></h2>
+        <p class="why" data-s="seatsWhy"></p>
+        <div class="seatmap" id="seatmap"></div>
+        <div id="operator" class="hide" style="margin-top:.7rem"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-s="noticesTitle"></h2>
+      <div class="notices" id="notices"></div>
+    </div>
+  </section>
+</main>
+<footer>
+  <span data-s="footer"></span>
+  <span id="conn"></span>
+</footer>
+<script src="/demo.js"></script>
+</body>
+</html>

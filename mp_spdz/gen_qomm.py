@@ -654,8 +654,16 @@ def build_inputs(
     user_limit: int = 100000,
     check_coefficients: list | None = None,
     check_repeats: int = 7,
+    policies_in: list | None = None,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
+
+    `policies_in` replaces the fixture with policies someone else chose --- a
+    person editing them in the demo, a tape replayed from a venue --- so the
+    circuit can be run against a market that is not this function's own random
+    draw. Everything else, the dealing and the cleartext reference included, is
+    unchanged, which is the point: a supplied market and the fixture have to go
+    through the same code or the reference stops being a check.
 
     Returns (per-party input list, cleartext reference used to check the result).
     """
@@ -696,7 +704,10 @@ def build_inputs(
 
     policies = []
     for i in range(n_mm):
-        if i < n_real_mm:
+        if i < n_real_mm and policies_in is not None:
+            supplied = policies_in[i]
+            pol = {f: int(supplied[f]) for f in FIELDS}
+        elif i < n_real_mm:
             # makers are spread across every asset, so the requested market is
             # one of several the same circuit serves
             asset = i % n_assets
@@ -887,6 +898,15 @@ def main() -> int:
                          "it once and only the inputs change per request")
     ap.add_argument("--out-program", type=Path, required=True)
     ap.add_argument("--out-input-dir", type=Path, required=True)
+    ap.add_argument("--ref-table", default=None,
+                    help="public reference price per asset, comma separated. "
+                         "Without it the prices are spread 5000 apart, which "
+                         "makes a wrong asset selection obvious in a test and "
+                         "means nothing in a market")
+    ap.add_argument("--policies", type=Path, default=None,
+                    help="a JSON list of policy objects to price instead of the "
+                         "seeded fixture, one per real maker. Each needs every "
+                         "field the fixture has")
     ap.add_argument("--out-reference", type=Path, required=True)
     args = ap.parse_args()
     coefficients = (json.loads(args.check_coefficients.read_text())
@@ -902,6 +922,16 @@ def main() -> int:
     padded = _pow2_ceil(args.n_mm)
     # spread the reference prices apart so a wrong asset selection is obvious
     ref_table = [args.ref_mid + 5_000 * a for a in range(args.n_assets)]
+    if args.ref_table:
+        # A caller with its own markets --- the demo, a replayed tape --- says
+        # what they are worth. The table is public and is compiled into the
+        # program, so changing it is a change of shape and forces a recompile,
+        # which is the right cost for public data and the wrong one to hide.
+        ref_table = [int(v) for v in args.ref_table.split(",")]
+        if len(ref_table) != args.n_assets:
+            print(f"error: --ref-table has {len(ref_table)} entries for "
+                  f"{args.n_assets} assets", file=sys.stderr)
+            return 6
     if not 0 <= args.user_asset < args.n_assets:
         print(f"error: --user-asset must be below --n-assets", file=sys.stderr)
         return 5
@@ -947,6 +977,12 @@ def main() -> int:
         args.out_program.parent.mkdir(parents=True, exist_ok=True)
         args.out_program.write_text(src, encoding="utf-8")
 
+    policies = None
+    if args.policies:
+        policies = json.loads(args.policies.read_text(encoding="utf-8"))
+        if len(policies) < args.n_mm:
+            raise SystemExit(f"--policies has {len(policies)} entries for "
+                             f"{args.n_mm} makers")
     per_party, reference = build_inputs(
         n_mm=padded,
         n_real_mm=args.n_mm,
@@ -975,6 +1011,7 @@ def main() -> int:
         binding_limit=args.binding_limit,
         user_limit=args.user_limit,
         check_repeats=args.check_repeats,
+        policies_in=policies,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)
     for party, values in per_party.items():
