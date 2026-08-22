@@ -156,6 +156,15 @@
       "bytes": 3055,
       "sha256": "b1d170505b5dbc08912588ce3be4ff6f0730137b8d8b2c62c99adc1979404a73"
     },
+    "per_party_circuit.json": {
+      "bytes": 2418,
+      "host": "host-a",
+      "sha256": "745a6e6d0194f3286eeb9d982a122833b09aaedb9035f24331b0e9fa3ce215ca"
+    },
+    "per_party_circuit_prediction.json": {
+      "bytes": 2214,
+      "sha256": "ac59dc9d91452db608ab6d03adccf4c123e97032fa40f4910c252be7fc32ece0"
+    },
     "placement.json": {
       "bytes": 1224,
       "host": "host-a",
@@ -257,5 +266,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "c4680551531e04d292bb5364af6af3721f9765f5"
+  "commit": "b44d05b25e364088cc7fa9d40fed27091a6e44dc"
 }

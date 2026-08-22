@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from qomm_transport.roles import check_field_width, split  # noqa: E402
+from qomm_transport.roles import SLACK_BITS, check_field_width, split  # noqa: E402
 import sys
 from pathlib import Path
 
@@ -101,6 +101,7 @@ def build_program(
     edabit: bool = False,
     trunc_pr: bool = False,
     input_check: bool = False,
+    check_mode: str = "aggregate",
     check_coefficients: list | None = None,
     check_repeats: int = 7,
     stop_after: str = "tournament",
@@ -156,17 +157,43 @@ def build_program(
     w(f"MAKER_ASSET = {maker_assets}")
     w(f"REF_MID = {ref_mid}   # only used for the sentinel scale")
     w("")
+    if check_mode == "per-party":
+        w(f"CHECK_COEFF = {check_coefficients}")
+        w("")
     w("# ---- how a secret gets in ----")
     w("# An input party is not a computing party. The trader and each market")
     w("# maker split their values into N shares that sum to them over the")
     w("# integers and hand share p to node p; the program adds the N inputs")
     w("# back. Reconstruction is local, so this costs rounds only in the input")
     w("# phase, and no computing node ever holds a whole request or policy.")
-    w("def secret_input():")
-    w("    total = sint.get_input_from(0)")
-    w("    for _p in range(1, N_PARTIES):")
-    w("        total = total + sint.get_input_from(_p)")
-    w("    return total")
+    if check_mode == "per-party":
+        # One accumulator per node, folded at read time. After secret_input()
+        # forms the sum the shares are gone, so the combination has to be built
+        # as they arrive. The coefficient is a compile-time constant, so public
+        # times secret stays local and only the opening below travels.
+        w(f"CHECK_REPEATS = {check_repeats}")
+        w("check_acc = [[sint(0) for _ in range(N_PARTIES)]")
+        w("             for _ in range(CHECK_REPEATS)]")
+        w("check_pos = [0]")
+        w("")
+        w("def secret_input():")
+        w("    total = None")
+        w("    _k = check_pos[0]")
+        w("    _shares = [sint.get_input_from(_p) for _p in range(N_PARTIES)]")
+        w("    for _r in range(CHECK_REPEATS):")
+        w("        _c = CHECK_COEFF[(_r * 7919 + _k) % len(CHECK_COEFF)]")
+        w("        for _p in range(N_PARTIES):")
+        w("            check_acc[_r][_p] = check_acc[_r][_p] + _shares[_p] * _c")
+        w("    for _s in _shares:")
+        w("        total = _s if total is None else total + _s")
+        w("    check_pos[0] += 1")
+        w("    return total")
+    else:
+        w("def secret_input():")
+        w("    total = sint.get_input_from(0)")
+        w("    for _p in range(1, N_PARTIES):")
+        w("        total = total + sint.get_input_from(_p)")
+        w("    return total")
     w("")
     w("# ---- user request, shared by the trader across every node ----")
     w(f"N_REQ = {n_requests}")
@@ -207,7 +234,31 @@ def build_program(
     for f in FIELDS:
         w(f"    col_{f}[i] = secret_input()")
     w("")
-    if input_check:
+    if check_mode == "per-party":
+        w("")
+        w("# ---- input check, one opening per node ----------------------------")
+        w("# The aggregate form below proves that AN input was substituted. This")
+        w("# one proves WHICH NODE did it, which is the difference between the")
+        w("# first and the fourth of the five rungs in ACCOUNTABILITY.md.")
+        w("#")
+        w("# Each node's accumulator was folded as its shares were read, because")
+        w("# after secret_input() forms the sum the shares are gone. The masks")
+        w("# are the one place the shape differs from every other input here:")
+        w("# each is read from a single node rather than split across all of")
+        w("# them, which is why the check needs 160 bits of field where the")
+        w("# aggregate one needs 164.")
+        w("#")
+        w("# `zk/input_check.py` build_per_party / verify_per_party is the other")
+        w("# half. It combines the same coefficients into the share commitments")
+        w("# `roles.Dealing` already publishes, so a failing opening names a node")
+        w("# from data anybody has.")
+        w("for _r in range(CHECK_REPEATS):")
+        w("    for _p in range(N_PARTIES):")
+        w("        _combined = check_acc[_r][_p] + sint.get_input_from(_p)")
+        w("        print_ln('QOMM_PER_PARTY_CHECK_%s_%s=%s', _r, _p,")
+        w("                 _combined.reveal())")
+        w("")
+    elif input_check:
         w("")
         w("# ---- input check: one random linear combination -------------------")
         w("# The coefficients are public and derived from the commitments the")
@@ -559,6 +610,7 @@ def build_inputs(
     field_bits: int = 128,
     use_ref: int = 1,
     input_check: bool = False,
+    check_mode: str = "aggregate",
     check_repeats: int = 7,
 ) -> tuple[dict[int, list[int]], dict]:
     """Deterministic policy fixture. Padding slots are inactive.
@@ -632,11 +684,37 @@ def build_inputs(
         # reason this needs a wider prime than the default: it is dealt like
         # every other input, so the field has to hold `n_parties` shares of it.
         n_values = n_mm * len(FIELDS) + n_requests * 4 + 2
-        width = mask_bits_for(n_values, value_bits, challenge_bits=6,
-                              statistical_bits=35)
-        check_field_width(n_parties, width, field_bits)
-        for _ in range(check_repeats):
-            deal(share_rng.randrange(1 << width), width=width)
+        check_bits = 6          # matches build_program's default coefficients
+        if check_mode == "per-party":
+            # One mask per node, read only from that node. This is the only
+            # input here that is not split, and it is why the per-party check
+            # needs 160 bits of field where the aggregate one needs 164: the
+            # mask does not pay the share slack that splitting costs.
+            # The mask has to hide a combination of SHARES, not of values, so
+            # it is `SLACK_BITS` wider than the aggregate one at the same
+            # coefficient width --- and it is read from one node rather than
+            # split across them, so it does not pay that slack a second time.
+            # Net at 31-bit values and 40-bit coefficients: 160 bits against
+            # 164. At the wider `value_bits` a deployment actually compiles
+            # with, both grow together.
+            share_bits = value_bits + SLACK_BITS
+            width = (share_bits + check_bits
+                     + max(0, (n_values - 1).bit_length()) + 40)
+            check_field_width(n_parties, value_bits, field_bits)
+            if width + 1 >= field_bits:
+                raise ValueError(
+                    f"the per-party check needs {width + 1} bits at "
+                    f"{check_bits}-bit coefficients and the field is "
+                    f"{field_bits}; widen the field or narrow the coefficients")
+            for _ in range(check_repeats):
+                for party in range(n_parties):
+                    per_party[party].append(share_rng.randrange(1 << width))
+        else:
+            width = mask_bits_for(n_values, value_bits, challenge_bits=6,
+                                  statistical_bits=35)
+            check_field_width(n_parties, width, field_bits)
+            for _ in range(check_repeats):
+                deal(share_rng.randrange(1 << width), width=width)
 
     # cleartext reference (what the circuit must reproduce)
     best_price = None
@@ -725,6 +803,11 @@ def main() -> int:
     ap.add_argument("--check-repeats", type=int, default=7,
                     help="independent combinations; soundness is challenge bits "
                          "times this, and they open in one round")
+    ap.add_argument("--check-mode", choices=("aggregate", "per-party"),
+                    default="aggregate",
+                    help="aggregate opens one combination and detects a "
+                         "substitution; per-party opens one per node and names "
+                         "the node that made it")
     ap.add_argument("--input-check", action="store_true",
                     help="emit the random linear combination that binds the "
                          "inputs to the published commitments")
@@ -788,6 +871,7 @@ def main() -> int:
         edabit=args.edabit,
         trunc_pr=args.trunc_pr,
         input_check=args.input_check,
+        check_mode=args.check_mode,
         check_repeats=args.check_repeats,
     )
     if not args.inputs_only:
@@ -817,6 +901,7 @@ def main() -> int:
         value_bits=args.bit_length + 1,
         field_bits=args.field_bits,
         input_check=args.input_check,
+        check_mode=args.check_mode,
         check_repeats=args.check_repeats,
     )
     args.out_input_dir.mkdir(parents=True, exist_ok=True)

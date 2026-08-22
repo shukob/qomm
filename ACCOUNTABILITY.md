@@ -360,13 +360,36 @@ seven, because each party's check stands alone against that party's own
 commitments. **That matters, because the case a decoder gives up on is exactly
 the case an operator most needs a name for.**
 
-**What is not done**: the circuit still opens one combination. Emitting `n`
-means `gen_qomm` keeping the per-party shares rather than summing them
-immediately, and dealing each mask to one node rather than splitting it --- a
-change to the main input path that every circuit test depends on, so it is
-stated rather than half-landed. The cost is `n` openings instead of one in the
-same round, which takes the check's own traffic from 0.0126 MB to about 0.09 MB
-against 19.37 MB for a quote: **under half a percent**.
+### And the circuit now emits it
+
+`gen_qomm --check-mode per-party`. `secret_input()` folds each share into its
+own node's accumulator **as it is read**, because once the sum is formed the
+shares are gone; the coefficient is a compile-time constant, so the combination
+is local and only the openings travel. The masks are the one input here that is
+not split: one is read from each node, which is what makes the field
+requirement smaller.
+
+Measured end to end on `host-a`, `M = 16`, seven parties, `T = 2`, 192-bit
+field, every arm verified against the cleartext reference:
+
+| | rounds | global | openings | what a failure says |
+|---|---:|---:|---:|---|
+| no check | 70 | 41.5443 MB | 0 | --- |
+| aggregate | 71 | 41.5521 MB | 7 | *an* input was substituted |
+| **per party** | **71** | **41.5804 MB** | **49** | **node `p` substituted its input** |
+
+**Naming costs zero extra rounds and 0.068% more traffic than merely
+detecting.** Against no check at all it is one round and 0.087%.
+
+Forty-nine openings rather than seven because at the 6-bit coefficients the
+generator emits, one combination binds a party at about `2^-6`, so seven
+repetitions give `2^-42` --- *per party*. They are independent, so they cost one
+round together, which is why the round count does not move.
+
+*The prediction said 3 kB and it was 28.3 kB.* The estimate assumed seven
+openings and forgot that soundness per party has to be bought by repetition the
+same way the aggregate check buys it. The conclusion --- negligible --- survives;
+the number was ten times light.
 
 **So the answer splits, and both halves now have a mechanism.** Who sent a
 malformed share: named by the engine, patch applied, 1.33x. Who lied about their
