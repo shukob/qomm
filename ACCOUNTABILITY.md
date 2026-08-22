@@ -263,9 +263,41 @@ Cost, on data already received, no extra rounds:
 | locate, one liar | 88.4 us |
 | locate, two liars | 208.1 us |
 
-**The traffic cost is the real one**: an opening today collects `2t+1 = 5` of
-seven, and `RS[5,3]` names one liar rather than two. Naming `T` needs all `n`
---- **40% more per opening**.
+### And it is now in the engine
+
+`rust/qomm-mpc/patches/locate-inconsistent-shares.patch`, built and run on
+`host-a` (`artifacts/decode_patch.json`). Same experiment as above, one byte
+flipped in one party's preprocessing:
+
+| corrupted | what the transcript now says |
+|---|---|
+| P0 / P1 / P3 / P5 / P6 | `... sent by player 0` / `1` / `3` / `5` / `6` |
+| {1,4} | `... sent by player 1, player 4` |
+| {0,2,5} | `more than 2 parties sent wrong shares, which is beyond the decoding capacity of this sharing` |
+
+Honest runs return the same answer as before. Three liars are refused rather
+than guessed at, which is the only correct behaviour past capacity.
+
+**The traffic cost, and the prediction it broke.** `ShamirMC::exchange` is a
+*partial* broadcast: with `threshold` set to `2t` it makes each party a sender
+to the `2t+1` nearest and no further --- exactly enough to reconstruct a
+degree-`2t` sharing and exactly one share short of locating two liars in a
+degree-`t` one. So the patch also has to widen the broadcast, and each party
+goes from four correspondents per opening to six.
+
+| | before | after | |
+|---|---:|---:|---|
+| online, elements per party per multiplication | 8.000 | **12.000** | **1.50x** |
+| single-phase total | 48.235 | **64.236** | **1.33x** |
+| rounds | 3 / 11--23 | 3 / 11--23 | unchanged |
+| per quote at `M=16`, global | 17.89 MB | **23.83 MB** | |
+
+**The prediction said this would be free**, on the reading that
+`ShamirMC::POpen_Begin` calls `P.send_all()` so every share was already on the
+wire. That is the *unbatched* path. The batched one is `exchange`, and it is
+what runs. **Third time in this project that reading one code path and assuming
+it is the one that executes has cost a number** --- after the `-P`/`-F` compile
+flag and after predicting MASCOT's online phase from what Shamir does here.
 
 ### The half of the answer that is not free
 

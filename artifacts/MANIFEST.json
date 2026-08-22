@@ -49,6 +49,15 @@
       "host": "host-a",
       "sha256": "0a5d5d778f4e74cf5291ea2a71b77d7c4a9d708670550c3cd00d880f00e0bedc"
     },
+    "decode_patch.json": {
+      "bytes": 3892,
+      "host": "host-a",
+      "sha256": "d4b7a9a852789831c8074ba2467011d71ed6c07c05f2967b11f74e848a87eb4e"
+    },
+    "decode_patch_prediction.json": {
+      "bytes": 2640,
+      "sha256": "7acc1df614df52a9136eb70098fd94d5876b5424e4e1328325a0bf2b012cf26c"
+    },
     "dishonest_majority.json": {
       "bytes": 4162,
       "host": "host-a",
@@ -239,5 +248,5 @@
       "sha256": "afdf7e26ff2d6050aeff8bb946874ae72daba935d009f57d49617c44b1e8aa11"
     }
   },
-  "commit": "aaac0df0ff331d2bed09c1b9313ac661211343df"
+  "commit": "03b8cd740468b6da869d5fb6ed66c28bdda54f49"
 }
